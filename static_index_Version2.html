@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="fi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pickup Assistant</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width:900px; margin:2rem auto; padding:1rem; }
+    textarea, input, select { width:100%; padding:0.5rem; margin:0.4rem 0; }
+    pre { background:#f6f6f6; padding:0.8rem; overflow:auto;}
+    button { padding:0.6rem 1rem; margin-right:0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>AI-avusteinen kitaramikrofonien asennusopas</h1>
+  <p>Syötä johtojen nimet (pilkuilla eroteltuna) ja mittaukset muodossa <code>a-b: ohm</code>.</p>
+
+  <label>Johtimet</label>
+  <input id="wires" value="red, white, black, bare" />
+
+  <label>Mittaukset (esim. red-white: 7200)</label>
+  <textarea id="measurements" rows="8"></textarea>
+
+  <div style="margin-top:0.6rem;">
+    <button id="analyzeBtn">Analyze</button>
+    <button id="generateBtn">Generate guide (LLM)</button>
+  </div>
+
+  <h2>Analyysin tulos</h2>
+  <pre id="result">Ei analyysiä vielä.</pre>
+
+  <h2>LLM-generated guide</h2>
+  <pre id="guide">Ei opasta vielä.</pre>
+
+<script>
+async function postJson(url, data) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  });
+  return res.json();
+}
+
+document.getElementById('analyzeBtn').addEventListener('click', async () => {
+  const wires = document.getElementById('wires').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const raw = document.getElementById('measurements').value.split('\n').map(l=>l.trim()).filter(Boolean);
+  const measurements = {};
+  raw.forEach(line=>{
+    const parts = line.split(':');
+    if(parts.length>=2){
+      const key = parts[0].trim();
+      const val = parseFloat(parts.slice(1).join(':').trim());
+      measurements[key] = isNaN(val) ? null : val;
+    }
+  });
+  document.getElementById('result').textContent = 'Analyzing...';
+  try {
+    const out = await postJson('/analyze', { wires, measurements });
+    document.getElementById('result').textContent = JSON.stringify(out, null, 2);
+  } catch (e) {
+    document.getElementById('result').textContent = 'Error: '+e;
+  }
+});
+
+document.getElementById('generateBtn').addEventListener('click', async () => {
+  // Use current analysis text or measurements
+  const raw = document.getElementById('measurements').value.split('\n').map(l=>l.trim()).filter(Boolean);
+  const measurements = {};
+  raw.forEach(line=>{
+    const parts = line.split(':');
+    if(parts.length>=2){
+      const key = parts[0].trim();
+      const val = parseFloat(parts.slice(1).join(':').trim());
+      measurements[key] = isNaN(val) ? null : val;
+    }
+  });
+  document.getElementById('guide').textContent = 'Generating...';
+  try {
+    // request generate; server will call local LLM
+    const analyzeResp = await postJson('/analyze', { wires: [], measurements });
+    const req = {
+      meas: measurements,
+      analysis_text: analyzeResp.plan ? analyzeResp.plan.explanation : JSON.stringify(analyzeResp)
+    };
+    const gen = await postJson('/generate', req);
+    document.getElementById('guide').textContent = gen.guide || JSON.stringify(gen, null, 2);
+  } catch (e) {
+    document.getElementById('guide').textContent = 'Error: '+e;
+  }
+});
+</script>
+</body>
+</html>
