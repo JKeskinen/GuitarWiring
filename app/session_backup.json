@@ -1,38 +1,53 @@
 {
-  "exp_bridge_north": false,
+  "exp_bridge_south": false,
+  "neck_img_choice": "south",
+  "n_up_probe_red_wire": "Red",
+  "probe_red_selection": "Neck Upper — Green",
+  "bridge_north_colors": [
+    "Red",
+    "Green"
+  ],
   "n_lo": 5.95,
+  "bare": false,
+  "edit_bridge_north_expanded": false,
+  "edit_neck_south_expanded": false,
+  "bridge_use_start_hot": false,
+  "show_neck_south_selector": false,
+  "exp_neck_north": false,
   "bridge_is_north_up": false,
-  "neck_is_north_up": false,
+  "b_lo_swap": false,
+  "n_lo_probe_black_wire": "Black",
+  "b_lo_probe_red_wire": "White",
+  "show_debug_state": false,
+  "n_up": 5.91,
+  "bridge_south_colors": [
+    "White",
+    "Black"
+  ],
+  "b_lo_probe_black_wire": "Black",
+  "n_lo_probe": "Reverse Phase",
+  "show_neck_north_selector": false,
+  "bridge_orientation": "Top = Screw (S) / Bottom = Slug (N)",
+  "b_up_probe_black_wire": "Green",
   "neck_north_colors": [
     "Red",
     "Green"
   ],
-  "n_lo_probe_red_wire": "White",
-  "step": 6,
-  "n_lo_probe": "Reverse Phase",
-  "edit_neck_north_expanded": false,
-  "show_neck_south_selector": false,
-  "n_up_probe_black_wire": "Green",
-  "show_neck_north_selector": false,
-  "b_up_probe_black_wire": "Green",
-  "b_lo_probe_black_wire": "Black",
-  "use_ai_responses": true,
-  "b_lo_probe_red_wire": "White",
-  "edit_neck_south_expanded": false,
-  "ai_model": "",
-  "probe_black_selection": "Neck Upper — Red",
-  "neck_use_start_hot": false,
-  "bridge_wire_colors": [
+  "b_lo_probe": "Reverse Phase",
+  "show_bridge_south_selector": false,
+  "b_up_probe_red_wire": "Red",
+  "neck_south_colors": [
+    "White",
+    "Black"
+  ],
+  "step": 1,
+  "edit_bridge_south_expanded": false,
+  "neck_wire_colors": [
     "Red",
     "White",
     "Green",
     "Black"
   ],
-  "show_debug_state": false,
-  "b_up_swap": false,
-  "edit_bridge_north_expanded": false,
-  "n_up_probe_red_wire": "Red",
-  "neck_img_choice": "south",
   "analysis": {
     "neck": {
       "HOT": "Red",
@@ -69,46 +84,31 @@
       }
     }
   },
-  "edit_bridge_south_expanded": false,
-  "show_bridge_north_selector": false,
-  "n_up": 5.91,
-  "probe_red_selection": "Neck Upper — Green",
-  "bridge_use_start_hot": false,
+  "neck_use_start_hot": false,
+  "n_lo_swap": false,
+  "neck_orientation": "Top = Screw (S) / Bottom = Slug (N)",
+  "edit_neck_north_expanded": false,
+  "n_up_probe": "Normal Phase",
+  "ai_model": "mistral:7b",
   "b_up": 7.62,
-  "bridge_north_colors": [
-    "Red",
-    "Green"
-  ],
-  "bridge_south_colors": [
-    "White",
-    "Black"
-  ],
-  "neck_south_colors": [
-    "White",
-    "Black"
-  ],
-  "show_bridge_south_selector": false,
   "b_lo": 7.65,
-  "exp_neck_south": false,
-  "b_lo_probe": "Reverse Phase",
-  "b_up_probe_red_wire": "Red",
-  "exp_bridge_south": false,
-  "bare": false,
-  "b_up_probe": "Normal Phase",
-  "neck_wire_colors": [
+  "n_up_probe_black_wire": "Green",
+  "exp_bridge_north": false,
+  "neck_is_north_up": false,
+  "probe_black_selection": "Neck Upper — Red",
+  "bridge_img_choice": "south",
+  "b_up_swap": false,
+  "n_up_swap": false,
+  "bridge_wire_colors": [
     "Red",
     "White",
     "Green",
     "Black"
   ],
-  "bridge_orientation": "Top = Screw (S) / Bottom = Slug (N)",
-  "exp_neck_north": false,
-  "neck_orientation": "Top = Screw (S) / Bottom = Slug (N)",
-  "n_up_probe": "Normal Phase",
-  "bridge_img_choice": "south",
-  "n_lo_swap": false,
+  "show_bridge_north_selector": false,
+  "b_up_probe": "Normal Phase",
+  "use_ai_responses": true,
   "north_reverse_phased": false,
-  "n_up_swap": false,
-  "b_lo_swap": false,
-  "n_lo_probe_black_wire": "Black"
+  "n_lo_probe_red_wire": "White",
+  "exp_neck_south": false
 }

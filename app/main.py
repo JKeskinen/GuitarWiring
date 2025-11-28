@@ -2,6 +2,7 @@ import os
 import streamlit as st
 import streamlit.components.v1 as components
 import json
+import re
 try:
     # preferred when running from project root
     from app.wiring import (
@@ -60,6 +61,54 @@ def _render_color_badges(colors: list) -> str:
             f"{c.upper()}</span>"
         )
     return ''.join(parts)
+
+
+def _collect_streamed_json_text(resp):
+    """Collect streamed JSON objects from a requests Response and return concatenated 'response' fields.
+
+    Handles newline-delimited JSON chunks and simple concatenated JSON objects. Returns empty
+    string on failure.
+    """
+    parts = []
+    try:
+        # Prefer iter_lines for streamed responses
+        for raw in resp.iter_lines(decode_unicode=True):
+            if not raw:
+                continue
+            s = raw.strip()
+            if not s:
+                continue
+            # Try to parse the entire line as JSON first
+            try:
+                obj = json.loads(s)
+            except Exception:
+                # Fallback: extract any JSON object substrings on the line
+                matches = re.findall(r'\{.*?\}', s)
+                obj = None
+                for m in matches:
+                    try:
+                        o = json.loads(m)
+                        if isinstance(o, dict) and 'response' in o:
+                            parts.append(o.get('response') or '')
+                    except Exception:
+                        continue
+                # continue to next line
+                continue
+
+            if isinstance(obj, dict):
+                # collect 'response' if present
+                if 'response' in obj and isinstance(obj.get('response'), str):
+                    parts.append(obj.get('response'))
+                elif 'text' in obj and isinstance(obj.get('text'), str):
+                    parts.append(obj.get('text'))
+                # stop when done==true
+                if obj.get('done') is True:
+                    break
+            else:
+                parts.append(str(obj))
+        return ''.join(parts).strip()
+    except Exception:
+        return ''
 
 st.set_page_config(page_title='Humbucker Wiring Assistant', layout='centered')
 
@@ -563,12 +612,14 @@ def call_local_ai(prompt: str, model: str = 'mistral:7b', timeout: float = 6.0) 
             resp_text = ''
 
         if 200 <= r.status_code < 300:
-            # Try JSON extraction for common shapes, otherwise return raw body
+            # First attempt: try to decode as standard JSON (most OpenAI-compatible responses)
+            j = None
             try:
                 j = r.json()
             except Exception:
                 j = None
 
+            # If normal JSON parsed, extract common fields
             if isinstance(j, dict):
                 if 'completion' in j and isinstance(j['completion'], str):
                     return {'ok': True, 'text': j['completion'], 'error': ''}
@@ -591,7 +642,28 @@ def call_local_ai(prompt: str, model: str = 'mistral:7b', timeout: float = 6.0) 
                                 if kk in first and isinstance(first[kk], str):
                                     return {'ok': True, 'text': first[kk], 'error': ''}
 
-            # fallback to raw text body
+            # If we failed to parse standard JSON, attempt to extract streamed JSON objects from the full text body
+            try:
+                collected = ''
+                # find all JSON object substrings and parse them individually
+                matches = re.findall(r'\{.*?\}', resp_text, flags=re.S)
+                for m in matches:
+                    try:
+                        o = json.loads(m)
+                        if isinstance(o, dict):
+                            if 'response' in o and isinstance(o.get('response'), str):
+                                collected += o.get('response')
+                            elif 'text' in o and isinstance(o.get('text'), str):
+                                collected += o.get('text')
+                    except Exception:
+                        continue
+                # If regex-based collection returned something, return it
+                if collected.strip():
+                    return {'ok': True, 'text': collected.strip(), 'error': ''}
+            except Exception:
+                pass
+
+            # fallback to raw text body if nothing else worked
             if resp_text.strip():
                 return {'ok': True, 'text': resp_text, 'error': ''}
 
