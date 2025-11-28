@@ -1227,6 +1227,100 @@ with st.expander('Step 5 — Phase checks', expanded=(step == 5)):
 
 
 # Step 6: Show analysis
+def _compute_wiring_order(upper_map: dict, lower_map: dict, wiring_type: str, bare_present: bool = False) -> dict:
+    """Compute wiring order for given wiring_type.
+
+    upper_map / lower_map are expected to have keys 'start' and 'finish' (wire color names).
+    wiring_type: 'series' | 'parallel' | 'slug_only' | 'screw_only'
+
+    Returns a dict with keys: 'output' (list), 'series' (list, only for series), 'ground' (list), 'notes' (str|None).
+    """
+    u_start = upper_map.get('start')
+    u_finish = upper_map.get('finish')
+    l_start = lower_map.get('start')
+    l_finish = lower_map.get('finish')
+
+    order = {'output': [], 'series': [], 'ground': [], 'notes': None}
+
+    if wiring_type == 'series':
+        # Typical series humbucker wiring: North START -> output (hot), North END + South END -> series link, South START -> ground
+        if u_start:
+            order['output'] = [u_start]
+        order['series'] = [w for w in (u_finish, l_finish) if w]
+        order['ground'] = [w for w in ([l_start] + (['Bare'] if bare_present else [])) if w]
+
+    elif wiring_type == 'parallel':
+        # Parallel humbucking: tie the two coil starts to output, tie the two finishes to ground (plus bare)
+        order['output'] = [w for w in (u_start, l_start) if w]
+        order['ground'] = [w for w in (u_finish, l_finish) if w]
+        if bare_present:
+            order['ground'].append('Bare')
+        order['notes'] = 'Parallel humbucking: ensure coils are in-phase before paralleling; use insulating joins as needed.'
+
+    elif wiring_type == 'slug_only':
+        # Use only the slug coil (upper coil in this app's mapping).
+        # User expectation: Red -> output; Black/Green/White (+ Bare) -> ground when present.
+        present = {v for v in (u_start, u_finish, l_start, l_finish) if v}
+        # Preferred single-hot colour for slug-only
+        if 'Red' in present:
+            order['output'] = ['Red']
+        else:
+            # fallback to Upper start/finish if Red not present
+            if u_start:
+                order['output'].append(u_start)
+            if u_finish and u_finish not in order['output']:
+                order['output'].append(u_finish)
+
+        # Grounds: prefer Black, then Green, White, and Bare (if present)
+        grounds = []
+        for g in ('Black', 'Green', 'White'):
+            if g in present:
+                grounds.append(g)
+        if bare_present and 'Bare' not in grounds:
+            grounds.append('Bare')
+        # fallback: if still empty, use any available other upper coil wire
+        if not grounds:
+            for cand in (u_finish, u_start):
+                if cand and cand not in grounds:
+                    grounds.append(cand)
+        order['ground'] = grounds
+        order['notes'] = 'Slug-only: use the slug (upper) coil. Typical mapping: Red → output; Black/Green/White (and Bare) → ground.'
+
+    elif wiring_type == 'screw_only':
+        # Use only the screw coil (bottom/lower coil in this app's mapping)
+        # Many users expect screw-only wiring where Red, Green and White are tied to output and Black (and Bare) go to ground.
+        # We'll prefer that canonical mapping when those colour names are present; otherwise fall back to the lower coil's start as output.
+        present = {v for v in (u_start, u_finish, l_start, l_finish) if v}
+        # Preferred output colours for screw-only (ordered)
+        preferred_outputs = [c for c in ('Red', 'Green', 'White') if c in present]
+        if preferred_outputs:
+            order['output'] = preferred_outputs
+        else:
+            # fallback: use lower coil start/finish
+            if l_start:
+                order['output'].append(l_start)
+            if l_finish and l_finish not in order['output']:
+                order['output'].append(l_finish)
+
+        # Ground should include Black and Bare if present; otherwise use other remaining lower-coil wire
+        grounds = []
+        if 'Black' in present:
+            grounds.append('Black')
+        if bare_present:
+            grounds.append('Bare')
+        # if nothing matched, fall back to lower finish/start
+        if not grounds:
+            for cand in (l_finish, l_start):
+                if cand and cand not in grounds:
+                    grounds.append(cand)
+        order['ground'] = grounds
+        order['notes'] = 'Screw-only: use the screw (lower) coil. Typical wiring ties Red, Green and White to output and Black/Bare to ground if present.'
+
+    else:
+        order['notes'] = 'Unknown wiring variant requested.'
+
+    return order
+
 def _find_candidate(base_name):
     exts = ['.svg', '.png', '.jpg', '.jpeg']
     places = [os.path.join('app', 'static'), os.path.join('app'), os.path.join('.')]
@@ -1647,6 +1741,285 @@ if st.session_state['step'] == 6:
     except Exception:
         pass
 
+    # New UI: Wiring order selector (Series / Parallel / Slug only / Screw only)
+    try:
+        st.subheader('Generate wiring order for alternate configurations')
+        wiring_choice = st.selectbox('Choose wiring variant', ['series', 'parallel', 'slug_only', 'screw_only'], index=0)
+        bare_present = bool(st.session_state.get('bare', False))
+
+        # recompute maps for this pickup (reuse previously-defined helpers)
+        def _none_if_dash(val):
+            return None if (val is None or (isinstance(val, str) and val.strip() == '--')) else val
+
+        upper_map = infer_start_finish_from_probes(
+            st.session_state.get('bridge_north_colors', []),
+            _none_if_dash(st.session_state.get('b_up_probe_red_wire')),
+            _none_if_dash(st.session_state.get('b_up_probe_black_wire')),
+            st.session_state.get('b_up_probe'),
+            st.session_state.get('b_up_swap', False)
+        )
+        lower_map = infer_start_finish_from_probes(
+            st.session_state.get('bridge_south_colors', []),
+            _none_if_dash(st.session_state.get('b_lo_probe_red_wire')),
+            _none_if_dash(st.session_state.get('b_lo_probe_black_wire')),
+            st.session_state.get('b_lo_probe'),
+            st.session_state.get('b_lo_swap', False)
+        )
+
+        if st.button('Compute wiring order'):
+            order = _compute_wiring_order(upper_map, lower_map, wiring_choice, bare_present=bare_present)
+            st.markdown(f"**Wiring variant:** {wiring_choice.replace('_', ' ').title()}")
+            if 'series' in order:
+                st.write(f"Hot (to switch): {', '.join(order.get('output', [])) or '<unknown>'}")
+                st.write(f"Series link (join together): {', '.join(order.get('series', [])) or '<none>'}")
+                st.write(f"Grounds: {', '.join(order.get('ground', [])) or '<unknown>'}")
+            else:
+                st.write(f"Output wires (to output/switch): {', '.join(order.get('output', [])) or '<unknown>'}")
+                st.write(f"Ground wires: {', '.join(order.get('ground', [])) or '<unknown>'}")
+            if order.get('notes'):
+                st.info(order.get('notes'))
+
+            # Render a small SVG visual showing which wires are output (hot) and which are ground.
+            try:
+                COLOR_HEX = {
+                    'Red': '#d62728',
+                    'White': '#ffffff',
+                    'Green': '#2ca02c',
+                    'Black': '#111111',
+                    'Yellow': '#ffbf00',
+                    'Blue': '#1f77b4',
+                    'Bare': '#888888'
+                }
+
+                # Build a unique ordered list of wires present in the pickup mapping
+                wire_candidates = [upper_map.get('start'), upper_map.get('finish'), lower_map.get('start'), lower_map.get('finish')]
+                wires = []
+                for w in wire_candidates:
+                    if w and w not in wires:
+                        wires.append(w)
+
+                # If we have no explicit wire names, fallback to showing known output/ground lists
+                if not wires:
+                    wires = list(dict.fromkeys((order.get('output', []) + order.get('ground', []))))
+
+                # Layout
+                width = 520
+                height = 160
+                margin_x = 40
+                y = 60
+                n = max(1, len(wires))
+                spacing = (width - 2 * margin_x) / max(1, n - 1) if n > 1 else 0
+
+                circles_svg = ''
+                labels_svg = ''
+                out_lines = ''
+                ground_lines = ''
+
+                for i, w in enumerate(wires):
+                    x = margin_x + i * spacing
+                    fill = COLOR_HEX.get(w, '#cccccc')
+                    is_output = w in order.get('output', [])
+                    is_ground = w in order.get('ground', [])
+                    stroke = '#222222' if not is_output else '#ffd700'
+                    stroke_w = 3 if is_output else 1
+
+                    circles_svg += f'<circle cx="{x}" cy="{y}" r="14" fill="{fill}" stroke="{stroke}" stroke-width="{stroke_w}" />'
+                    labels_svg += f'<text x="{x + 18}" y="{y + 6}" font-family="sans-serif" font-size="13" fill="#ffffff">{w}</text>'
+
+                    # Draw connector for output wires to a central output bus on the right
+                    if is_output:
+                        out_x = width - 80
+                        out_lines += f'<line x1="{x + 14}" y1="{y}" x2="{out_x}" y2="{y}" stroke="#ffd700" stroke-width="3" stroke-linecap="round" />'
+                    # Ground wires: draw a slanted line down-left to a ground icon
+                    if is_ground:
+                        gx = 40
+                        gy = height - 20
+                        ground_lines += f'<line x1="{x - 6}" y1="{y + 14}" x2="{gx}" y2="{gy}" stroke="#111111" stroke-width="4" stroke-linecap="round" />'
+
+                # Output bus and label
+                out_bus = f'<rect x="{width - 100}" y="{y - 12}" width="16" height="24" fill="#ffd700" stroke="#222" />'
+                out_label = f'<text x="{width - 72}" y="{y + 6}" font-family="sans-serif" font-size="13" fill="#ffffff">Output</text>'
+
+                # Ground icon
+                ground_icon = f'<circle cx="40" cy="{height - 20}" r="10" fill="#111111" stroke="#222" /> <text x="56" y="{height - 16}" font-family="sans-serif" font-size="13" fill="#ffffff">Ground</text>'
+
+                # UI controls for visual styling: allow user to pick colors and wire width
+                try:
+                    marker_outline_color = st.color_picker('Marker outline color', '#222222', key='wiring_marker_outline')
+                except Exception:
+                    marker_outline_color = '#222222'
+                try:
+                    output_color = st.color_picker('Output highlight color', '#ffd700', key='wiring_output_color')
+                except Exception:
+                    output_color = '#ffd700'
+                try:
+                    wire_color = st.color_picker('Wire/connector color', '#ffffff', key='wiring_wire_color')
+                except Exception:
+                    wire_color = '#ffffff'
+                try:
+                    ground_color = st.color_picker('Ground marker color', '#111111', key='wiring_ground_color')
+                except Exception:
+                    ground_color = '#111111'
+                try:
+                    wire_width = int(st.slider('Wire stroke width', min_value=1, max_value=8, value=3, key='wiring_wire_width'))
+                except Exception:
+                    wire_width = 3
+
+                # Prefer overlaying these markers on the actual pickup SVG if present
+                try:
+                    # choose bridge image according to user's image choice
+                    bridge_choice = st.session_state.get('bridge_img_choice', 'north')
+                    north_svg = _find_candidate('humbuckerNORTH')
+                    south_svg = _find_candidate('humbuckerSOUTH')
+                    pick_path = north_svg if bridge_choice == 'north' else south_svg
+                    if pick_path and os.path.exists(pick_path) and pick_path.lower().endswith('.svg'):
+                        with open(pick_path, 'r', encoding='utf-8') as f:
+                            base_svg = f.read()
+
+                        # Build overlay that uses the same layout as the sidebar overlay
+                        # Values and positions copied from colour_svg_overlay above so markers align
+                        # r: radius of the coloured ball markers
+                        r = 12
+                        # left_x: x coordinate where the left stub meets the pickup-art edge
+                        left_x = 18
+                        # default_circle_x: nominal x coordinate where the coloured balls would be placed
+                        default_circle_x = 140
+                        # line_fraction: fraction of the distance between left_x and default circle where we stop the stub
+                        line_fraction = 0.6
+                        # y coordinates for the four markers. Order corresponds to the `vals` list below.
+                        # Tune these values if your pickup SVG artwork requires vertical adjustments.
+                        y_a1 = 36   # North Start (upper coil start)
+                        y_a2 = 76   # North End (upper coil end)
+                        y_b1 = 194  # South Start (lower coil start)
+                        y_b2 = 156  # South End (lower coil end)
+                        y_positions = [y_a1, y_a2, y_b1, y_b2]
+
+                        # Use canonical coil ordering: Coil1 Start, Coil1 End, Coil2 Start, Coil2 End
+                        vals = [upper_map.get('start'), upper_map.get('finish'), lower_map.get('start'), lower_map.get('finish')]
+                        fills = [COLOR_HEX.get(v, '#cccccc') if v else '#cccccc' for v in vals]
+
+                        # compute circle positions
+                        # line_end_full: ideal x where stub meets circle center if drawn fully
+                        line_end_full = default_circle_x - r - 6
+                        # line_end: actual x where the horizontal stub stops (a fraction of the full distance)
+                        line_end = left_x + int((line_end_full - left_x) * line_fraction)
+                        # circle_x: x coordinate for the centre of marker circles
+                        circle_x = line_end + r + 6
+                        # Note: all circles share the same x position here (matches sidebar overlay behaviour)
+
+                        parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 220" preserveAspectRatio="xMinYMin meet" width="320" height="220">']
+                        # draw connector stubs and coloured balls, store positions by wire name
+                        pos_by_wire = {}
+                        for i, (v, fcol, y) in enumerate(zip(vals, fills, y_positions)):
+                            # Choose a contrasting line colour for white/yellow/black markers
+                            try:
+                                fl = fcol.lower()
+                                if fl in ('#ffffff', '#ffbf00'):
+                                    line_color = '#cccccc'
+                                elif fl in ('#111111', '#000000'):
+                                    line_color = '#000000'
+                                else:
+                                    line_color = fcol
+                            except Exception:
+                                line_color = '#cccccc'
+
+                            # Draw the left stub that visually connects the pickup art to the overlay
+                            # Use the chosen wire color and width for stubs
+                            parts.append(f'<line x1="0" y1="{y}" x2="{left_x}" y2="{y}" stroke="{wire_color}" stroke-width="{wire_width}" stroke-opacity="0.75" />')
+                            parts.append(f'<line x1="{left_x}" y1="{y}" x2="{line_end}" y2="{y}" stroke="{wire_color}" stroke-width="{wire_width}" stroke-opacity="0.75" />')
+
+                            # Draw the coloured ball marker at (circle_x, y)
+                            # Marker outline uses the chosen outline color
+                            parts.append(f'<circle cx="{circle_x}" cy="{y}" r="{r}" fill="{fcol}" stroke="{marker_outline_color}" stroke-width="1" />')
+
+                            # Text on top of ball: single-character identifier (first char of wire name) for quick read
+                            text_fill = '#111111' if fcol.lower() in ('#ffffff', '#ffbf00') else '#ffffff'
+                            parts.append(f'<text x="{circle_x}" y="{y}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="12" fill="{text_fill}">{(v[0] if v else "?")}</text>')
+
+                            # Detailed label to the right: use the app's coil naming (North/South Start/End)
+                            pos_labels = ['North Start', 'North End', 'South Start', 'South End']
+                            pos_label = pos_labels[i] if i < len(pos_labels) else f'Coil{i+1}'
+                            parts.append(f'<text x="{circle_x + r + 10}" y="{y+4}" font-family="sans-serif" font-size="12" fill="#ffffff">{pos_label}: {(v or "<unknown>")}</text>')
+
+                            # Record known positions for later connector drawing (series, output, ground)
+                            if v:
+                                pos_by_wire[v] = (circle_x, y)
+
+                        # Draw series connectors (vertical) between the two middle balls if present in order
+                        # `order['series']` should list the two wires that form the series join (north_end, south_end).
+                        try:
+                            for i in range(len(order.get('series', [])) - 1):
+                                a = order['series'][i]
+                                b = order['series'][i+1]
+                                pa = pos_by_wire.get(a)
+                                pb = pos_by_wire.get(b)
+                                if pa and pb:
+                                            # Series join uses the selected wire color and width
+                                            parts.append(f'<line x1="{pa[0]}" y1="{pa[1]}" x2="{pb[0]}" y2="{pb[1]}" stroke="{wire_color}" stroke-width="{max(2, wire_width)}" stroke-linecap="round" />')
+                        except Exception:
+                            pass
+
+                        # Highlight output wires: draw an Output box with chosen color and connect output markers to it
+                        out_bus_x = 220
+                        out_bus_y = 60
+                        parts.append(f'<rect x="{out_bus_x}" y="{out_bus_y - 12}" width="16" height="24" fill="{output_color}" stroke="{marker_outline_color}" />')
+                        # choose contrasting text color for output label
+                        out_text_fill = '#111111' if output_color.lower() in ('#ffffff', '#ffbf00', '#ffff00') else '#ffffff'
+                        parts.append(f'<text x="{out_bus_x + 28}" y="{out_bus_y + 6}" font-family="sans-serif" font-size="12" fill="{out_text_fill}">Output</text>')
+                        for w in order.get('output', []):
+                            p = pos_by_wire.get(w)
+                            if p:
+                                # Line from marker to output box uses output_color
+                                parts.append(f'<line x1="{p[0] + r}" y1="{p[1]}" x2="{out_bus_x}" y2="{out_bus_y}" stroke="{output_color}" stroke-width="{wire_width}" stroke-linecap="round" />')
+                                # Outline the marker to highlight it as an output
+                                parts.append(f'<circle cx="{p[0]}" cy="{p[1]}" r="{r + 4}" fill="none" stroke="{output_color}" stroke-width="3" />')
+
+                        # Ground icon and connectors
+                        # Use the selected ground_color for the icon fill and connectors
+                        ground_x = 220
+                        ground_y = 180
+                        g_fill = ground_color
+                        parts.append(f'<circle cx="{ground_x}" cy="{ground_y}" r="10" fill="{g_fill}" stroke="{marker_outline_color}" stroke-width="3"/>')
+                        # Use white text if the chosen ground color is dark-ish; otherwise use dark text.
+                        text_fill = '#ffffff' if g_fill.lower() not in ('#ffffff', '#ffbf00', '#ffff00') else '#111111'
+                        parts.append(f'<text x="{ground_x + 18}" y="{ground_y + 4}" font-family="sans-serif" font-size="12" fill="{text_fill}">Ground</text>')
+                        for w in order.get('ground', []):
+                            p = pos_by_wire.get(w)
+                            if p:
+                                # Connector from marker down-left to the ground icon; use ground_color for stroke
+                                parts.append(f'<line x1="{p[0] - 6}" y1="{p[1] + 14}" x2="{ground_x}" y2="{ground_y}" stroke="{g_fill}" stroke-width="{wire_width}" stroke-linecap="round" />')
+
+                        parts.append('</svg>')
+                        overlay_html = '\n'.join(parts)
+
+                        html = f"""
+                        <div style="position:relative; width:100%; max-width:720px;">
+                          <div style="position:relative; z-index:1;">{base_svg}</div>
+                          <div style="position:absolute; right:8px; top:8px; z-index:2; pointer-events:none;">{overlay_html}</div>
+                        </div>
+                        """
+                        components.html(html, height=260)
+                    else:
+                        # fallback to the compact visualization if pickup SVG not found
+                        svg_html = f'''<div style="width:100%; max-width:640px;">
+<svg viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">
+  {circles_svg}
+  {labels_svg}
+  {out_lines}
+  {ground_lines}
+  {out_bus}
+  {out_label}
+  {ground_icon}
+</svg>
+</div>'''
+                        components.html(svg_html, height=height + 20)
+                except Exception as e:
+                    st.error(f"Could not render wiring visual on pickup SVG: {e}")
+            except Exception as e:
+                st.error(f"Could not render wiring visual: {e}")
+    except Exception:
+        pass
+
     # Polarity diagnostics and one-click fix
     try:
         st.subheader('Electrical polarity check')
@@ -1761,6 +2134,8 @@ if st.session_state['step'] == 6:
         st.button('Apply polarity fix', on_click=_apply_polarity_fix)
     except Exception:
         pass
+
+    # Wiring order helper moved earlier in the file to ensure it's defined before use.
 
     if st.button('Restart'):
         # Remove saved backup as well
