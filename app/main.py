@@ -4,10 +4,24 @@ import streamlit.components.v1 as components
 import json
 try:
     # preferred when running from project root
-    from app.wiring import MANUFACTURER_COLORS, WIRING_PRESETS, simple_humbucker_svg, analyze_pickup, infer_start_finish_from_probes
+    from app.wiring import (
+        MANUFACTURER_COLORS,
+        WIRING_PRESETS,
+        simple_humbucker_svg,
+        analyze_pickup,
+        infer_start_finish_from_probes,
+        compute_electrical_polarity_from_probe,
+    )
 except Exception:
     # fallback when Streamlit runs this file directly (app/ on sys.path)
-    from wiring import MANUFACTURER_COLORS, WIRING_PRESETS, simple_humbucker_svg, analyze_pickup, infer_start_finish_from_probes
+    from wiring import (
+        MANUFACTURER_COLORS,
+        WIRING_PRESETS,
+        simple_humbucker_svg,
+        analyze_pickup,
+        infer_start_finish_from_probes,
+        compute_electrical_polarity_from_probe,
+    )
 
 # HTTP helper for local AI health check
 try:
@@ -25,6 +39,9 @@ GLOBAL_COLOR_HEX = {
     'Blue': '#1f77b4',
     'Bare': '#888888'
 }
+
+# Alias used in several helpers (kept for compatibility with earlier code)
+COLOR_HEX = GLOBAL_COLOR_HEX
 
 def _render_color_badges(colors: list) -> str:
     """Return HTML for inline badges matching the given color names."""
@@ -165,11 +182,8 @@ def _map_top_bottom_from_choice(choice: str):
 
 # determine image path (fall back to repo root image if available)
 def _pickup_image_path():
-    # look for a nearby image in project root
+    # look for humbucker images inside the app package (avoid repo-root screenshots)
     candidates = [
-        os.path.join('..', 'Screenshot_20200801-115508_Firefox Klar.jpg'),
-        os.path.join('..', 'Screenshot_20200801-115508_Firefox Klar .jpg'),
-        os.path.join('..', 'static', 'pickup.png'),
         os.path.join('app', 'static', 'humbuckerNORTH.svg'),
         os.path.join('app', 'humbuckerNORTH.svg'),
         os.path.join('humbuckerNORTH.svg'),
@@ -480,6 +494,149 @@ except Exception as e:
     except Exception:
         pass
 
+
+# Generic caller that attempts a few common Ollama endpoints to get text output.
+def call_local_ai(prompt: str, model: str = 'mistral:7b', timeout: float = 6.0) -> dict:
+    """Try to call a local Ollama-like server and return {'ok':bool,'text':str,'error':str}.
+
+    The function tries multiple common endpoints (/api/generate, /api/chat, /api/completions)
+    and returns the first successful textual result. It sends the raw `prompt` as-is so
+    there's no added pre-coding of the user's question.
+    """
+    base = os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434').rstrip('/')
+    # First, query /v1/models to discover available model ids and prefer an exact match
+    try:
+        models_url = base + '/v1/models'
+        if requests is not None:
+            mresp = requests.get(models_url, timeout=2.0)
+            if mresp.status_code == 200:
+                try:
+                    mj = mresp.json()
+                    if isinstance(mj, dict) and 'data' in mj and isinstance(mj['data'], list) and len(mj['data']) > 0:
+                        available = [d.get('id') for d in mj['data'] if isinstance(d, dict) and 'id' in d]
+                        # prefer explicit mistral id if present
+                        if model and model in available:
+                            model = model
+                        elif 'mistral:7b' in available:
+                            model = 'mistral:7b'
+                        elif len(available) > 0:
+                            model = available[0]
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Try a variety of common endpoint paths and payload shapes (OpenAI-style first)
+    endpoints = [
+        # OpenAI-compatible chat completions
+        ('/v1/chat/completions', lambda p: {'model': model, 'messages': [{'role': 'user', 'content': p}]}),
+        # OpenAI-compatible completions
+        ('/v1/completions', lambda p: {'model': model, 'prompt': p, 'max_tokens': 512}),
+        # Older Ollama API shapes
+        ('/api/generate', lambda p: {'model': model, 'prompt': p, 'max_tokens': 512}),
+        ('/api/completions', lambda p: {'model': model, 'prompt': p, 'max_tokens': 512}),
+        ('/api/chat', lambda p: {'model': model, 'messages': [{'role': 'user', 'content': p}]}),
+        # fallback variations
+        ('/v1/generate', lambda p: {'model': model, 'prompt': p}),
+        ('/v1/chat', lambda p: {'model': model, 'messages': [{'role': 'user', 'content': p}]}),
+    ]
+    if requests is None:
+        return {'ok': False, 'text': '', 'error': 'requests library not available'}
+
+    headers = {'Content-Type': 'application/json'}
+    attempts = []
+    for path, payload_fn in endpoints:
+        url = base + path
+        try:
+            payload = payload_fn(prompt)
+            r = requests.post(url, json=payload, timeout=timeout)
+        except requests.exceptions.RequestException as e:
+            attempts.append({'url': url, 'status': 'request-failed', 'error': str(e)})
+            # try next endpoint
+            continue
+
+        # Record response for diagnostics
+        resp_text = ''
+        try:
+            resp_text = r.text or ''
+        except Exception:
+            resp_text = ''
+
+        if 200 <= r.status_code < 300:
+            # Try JSON extraction for common shapes, otherwise return raw body
+            try:
+                j = r.json()
+            except Exception:
+                j = None
+
+            if isinstance(j, dict):
+                if 'completion' in j and isinstance(j['completion'], str):
+                    return {'ok': True, 'text': j['completion'], 'error': ''}
+                if 'result' in j and isinstance(j['result'], str):
+                    return {'ok': True, 'text': j['result'], 'error': ''}
+                if 'output' in j and isinstance(j['output'], str):
+                    return {'ok': True, 'text': j['output'], 'error': ''}
+                if 'choices' in j and isinstance(j['choices'], list) and len(j['choices']) > 0:
+                    first = j['choices'][0]
+                    if isinstance(first, dict):
+                        if 'text' in first and isinstance(first['text'], str):
+                            return {'ok': True, 'text': first['text'], 'error': ''}
+                        if 'message' in first and isinstance(first['message'], dict) and 'content' in first['message']:
+                            return {'ok': True, 'text': first['message']['content'], 'error': ''}
+                for k in ('results', 'generations'):
+                    if k in j and isinstance(j[k], list) and len(j[k]) > 0:
+                        first = j[k][0]
+                        if isinstance(first, dict):
+                            for kk in ('text', 'output', 'content'):
+                                if kk in first and isinstance(first[kk], str):
+                                    return {'ok': True, 'text': first[kk], 'error': ''}
+
+            # fallback to raw text body
+            if resp_text.strip():
+                return {'ok': True, 'text': resp_text, 'error': ''}
+
+            attempts.append({'url': url, 'status': r.status_code, 'body': resp_text})
+            # continue to next endpoint
+            continue
+        else:
+            # Non-2xx — include body for diagnostics
+            attempts.append({'url': url, 'status': r.status_code, 'body': resp_text})
+            # try next endpoint
+            continue
+
+    # If we reach here, none of the endpoints returned usable text. Try using app.llm_client.SimpleLLM if available.
+    fallback_msgs = []
+    try:
+        from app.llm_client import SimpleLLM
+        try:
+            llm = SimpleLLM(ollama_url=base, model=model)
+            res = llm.generate(prompt, max_tokens=512)
+            if res and isinstance(res, str) and res.strip():
+                return {'ok': True, 'text': res, 'error': ''}
+            fallback_msgs.append('SimpleLLM returned empty response')
+        except Exception as e:
+            fallback_msgs.append(f'SimpleLLM exception: {e}')
+    except Exception as e:
+        fallback_msgs.append(f'No SimpleLLM available: {e}')
+
+    # Build a helpful error message including collected diagnostics
+    diag_lines = [f"Attempt to call local AI failed. Base URL: {base}"]
+    for a in attempts:
+        diag_lines.append(f"- {a.get('url')} -> {a.get('status')} ; body=" + (str(a.get('body'))[:200] if a.get('body') else '<empty>'))
+    for m in fallback_msgs:
+        diag_lines.append(f"- fallback: {m}")
+
+    return {'ok': False, 'text': '', 'error': '\n'.join(diag_lines)}
+
+# Sidebar: allow opting into direct AI responses from a local model
+try:
+    use_ai = st.sidebar.checkbox('Use AI responses (experimental)', value=False, key='use_ai_responses')
+    ai_model = st.sidebar.text_input('Model name', value=st.session_state.get('ai_model', 'mistral:7b'), key='ai_model')
+    st.session_state['ai_model'] = ai_model
+except Exception:
+    use_ai = False
+    ai_model = 'mistral'
+
 FAQ_KB = {
     'soldering_tools': (
         '**Soldering — Tools & safety**\n'
@@ -552,9 +709,26 @@ def _ai_helper_answer(q: str) -> str:
     )
 
 if st.sidebar.button('Ask'):
-    answer = _ai_helper_answer(question)
-    # show as markdown for readability
-    st.sidebar.markdown(answer)
+    # If user opted into AI responses, send the raw question to the local model
+    if st.session_state.get('use_ai_responses'):
+        model = st.session_state.get('ai_model', 'mistral')
+        try:
+            resp = call_local_ai(question, model=model)
+            if resp.get('ok'):
+                st.sidebar.markdown(resp.get('text') or '_(no text returned)_')
+            else:
+                # Fallback to a short error then the canned FAQ
+                st.sidebar.error(f"AI call failed: {resp.get('error')}")
+                answer = _ai_helper_answer(question)
+                st.sidebar.markdown(answer)
+        except Exception as e:
+            st.sidebar.error(f"AI call exception: {e}")
+            answer = _ai_helper_answer(question)
+            st.sidebar.markdown(answer)
+    else:
+        answer = _ai_helper_answer(question)
+        # show as markdown for readability
+        st.sidebar.markdown(answer)
 
 # Top navigation for steps (Previous / Next)
 MAX_STEP = 6
@@ -1477,4 +1651,58 @@ if st.session_state['step'] == 6:
                 analysis_neck = analyze_pickup(
                     neck_pair,
                     south_pair,
-                    st.session_state.get('n_up_probe
+                    st.session_state.get('n_up_probe'),
+                    st.session_state.get('n_lo_probe'),
+                    north_swap=st.session_state.get('n_up_swap'),
+                    south_swap=st.session_state.get('n_lo_swap'),
+                    bare=st.session_state.get('bare'),
+                    north_res_kohm=st.session_state.get('n_up'),
+                    south_res_kohm=st.session_state.get('n_lo'),
+                    north_red_wire=_none_if_dash(st.session_state.get('n_up_probe_red_wire')),
+                    north_black_wire=_none_if_dash(st.session_state.get('n_up_probe_black_wire')),
+                    south_red_wire=_none_if_dash(st.session_state.get('n_lo_probe_red_wire')),
+                    south_black_wire=_none_if_dash(st.session_state.get('n_lo_probe_black_wire')),
+                )
+
+                analysis_bridge = analyze_pickup(
+                    bridge_north,
+                    bridge_south,
+                    st.session_state.get('b_up_probe'),
+                    st.session_state.get('b_lo_probe'),
+                    north_swap=st.session_state.get('b_up_swap'),
+                    south_swap=st.session_state.get('b_lo_swap'),
+                    bare=st.session_state.get('bare'),
+                    north_res_kohm=st.session_state.get('b_up'),
+                    south_res_kohm=st.session_state.get('b_lo'),
+                    north_red_wire=_none_if_dash(st.session_state.get('b_up_probe_red_wire')),
+                    north_black_wire=_none_if_dash(st.session_state.get('b_up_probe_black_wire')),
+                    south_red_wire=_none_if_dash(st.session_state.get('b_lo_probe_red_wire')),
+                    south_black_wire=_none_if_dash(st.session_state.get('b_lo_probe_black_wire')),
+                )
+                st.session_state['analysis'] = {'neck': analysis_neck, 'bridge': analysis_bridge}
+                _save_state()
+                st.success('Applied polarity fixes and recomputed analysis.')
+                _safe_rerun()
+            else:
+                st.info('No polarity fixes needed.')
+
+        st.button('Apply polarity fix', on_click=_apply_polarity_fix)
+    except Exception:
+        pass
+
+    if st.button('Restart'):
+        # Remove saved backup as well
+        try:
+            if os.path.exists(BACKUP_PATH):
+                os.remove(BACKUP_PATH)
+        except Exception:
+            pass
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+        _safe_rerun()
+
+# Persist current state on each run so changes are saved automatically
+try:
+    _save_state()
+except Exception:
+    pass
