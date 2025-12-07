@@ -18,9 +18,9 @@ class SimpleLLM:
     def __init__(self, backend: Optional[str] = None, ollama_url: Optional[str] = None, model: Optional[str] = None):
         self.backend = backend or os.environ.get("LLM_BACKEND", "ollama")
         # Ollama server URL (default port 11434)
-        self.ollama_url = ollama_url or os.environ.get("OLLAMA_URL", "http://localhost:11434")
+        self.ollama_url = ollama_url or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
         # Default model name; user can override with env var OLLAMA_MODEL
-        self.model = model or os.environ.get("OLLAMA_MODEL", "mistral:7b")
+        self.model = model or os.environ.get("OLLAMA_MODEL", "mistral")
 
     def generate(self, prompt: str, max_tokens: int = 400) -> str:
         if self.backend != "ollama":
