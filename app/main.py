@@ -1062,8 +1062,11 @@ with st.expander('Step 5 — Phase checks', expanded=(step == 5)):
         default_idx = 0 if st.session_state.get(phase_key, 'Resistance increase') == 'Resistance increase' else 1
         st.radio(f'{title}: Touch coil with metal. If resistance increased when touched: Phase is normal.', phase_opts, index=default_idx, key=phase_key)
 
+    st.markdown('### Neck Pickup')
     _coil_probe_row('Neck — Upper coil', neck_top_wires, 'n_up_probe_red_wire', 'n_up_probe_black_wire', 'n_up_probe')
     _coil_probe_row('Neck — Lower coil', neck_bottom_wires, 'n_lo_probe_red_wire', 'n_lo_probe_black_wire', 'n_lo_probe')
+    
+    st.markdown('### Bridge Pickup')
     _coil_probe_row('Bridge — Upper coil', bridge_top_wires, 'b_up_probe_red_wire', 'b_up_probe_black_wire', 'b_up_probe')
     _coil_probe_row('Bridge — Lower coil', bridge_bottom_wires, 'b_lo_probe_red_wire', 'b_lo_probe_black_wire', 'b_lo_probe')
 
@@ -1252,12 +1255,9 @@ def _compute_wiring_order(upper_map: dict, lower_map: dict, wiring_type: str, ba
             order['ground'].append('Bare')
 
     elif wiring_type == 'screw_only':
-        # SCREW ONLY: South Finish → HOT, North Start + North Finish + South Start → GROUND
-        if l_finish:
-            order['output'] = [l_finish]
-        order['ground'] = [w for w in (u_start, u_finish, l_start) if w]
-        if bare_present:
-            order['ground'].append('Bare')
+            # SCREW ONLY (manufacturer): Red + Green + White → HOT, Black (+ Bare) → GROUND
+            order['output'] = [w for w in (u_start, u_finish, l_finish) if w]  # Red, Green, White
+            order['ground'] = [w for w in ([l_start] + (['Bare'] if bare_present else [])) if w]  # Black (+ Bare)
 
     else:
         order['notes'] = 'Unknown wiring variant requested.'
@@ -1442,7 +1442,7 @@ if st.session_state['step'] == 6:
     analysis = st.session_state.get('analysis', {})
     neck = analysis.get('neck')
     bridge = analysis.get('bridge')
-    st.subheader('Neck pickup')
+    st.header('Neck pickup')
     # Recompute mapping so we can show explicit START/END labels
     try:
         neck_upper_map = infer_start_finish_from_probes(
@@ -1562,29 +1562,6 @@ if st.session_state['step'] == 6:
             # pick series colors (use first two in series_link or defaults)
             s1 = series_link[0] if series_link and len(series_link) > 0 else 'White'
             s2 = series_link[1] if series_link and len(series_link) > 1 else 'Green'
-            s1_col = COLOR_HEX.get(s1, '#ffffff')
-            s2_col = COLOR_HEX.get(s2, '#2ca02c')
-            ground_col = '#ffffff'
-            wiring_svg = f'''<div style="width:320px;">
-<svg viewBox="0 0 320 140" xmlns="http://www.w3.org/2000/svg" width="320" height="140">
-  <!-- HOT line to switch -->
-  <line x1="10" y1="30" x2="220" y2="30" stroke="{hot_col}" stroke-width="8" stroke-linecap="round" />
-  <circle cx="230" cy="30" r="12" fill="{hot_col}" stroke="#222" />
-  <text x="250" y="34" font-family="sans-serif" font-size="14" fill="#ffffff">HOT → SWITCH</text>
-
-  <!-- Series link: two coloured balls and short vertical connector -->
-  <line x1="140" y1="50" x2="140" y2="95" stroke="#ffffff" stroke-width="3" stroke-linecap="round" />
-  <circle cx="140" cy="50" r="12" fill="{s2_col}" stroke="#222" />
-  <circle cx="140" cy="95" r="12" fill="{s1_col}" stroke="#222" />
-  <text x="80" y="72" font-family="sans-serif" font-size="13" fill="#ffffff">Series</text>
-
-    <!-- Ground (white) line from lower series ball down-left -->
-  <line x1="140" y1="95" x2="60" y2="120" stroke="{ground_col}" stroke-width="6" stroke-linecap="round" />
-  <circle cx="52" cy="120" r="8" fill="{ground_col}" stroke="#222" />
-    <text x="62" y="124" font-family="sans-serif" font-size="13" fill="#111111">Ground</text>
-</svg>
-</div>'''
-            components.html(wiring_svg, height=160)
         except Exception:
             pass
         st.markdown('**Neck — Step-by-step**')
@@ -1596,7 +1573,7 @@ if st.session_state['step'] == 6:
     except Exception:
         pass
 
-    st.subheader('Bridge pickup')
+    st.header('Bridge pickup')
     try:
         bridge_upper_map = infer_start_finish_from_probes(
             st.session_state.get('bridge_north_colors', []),

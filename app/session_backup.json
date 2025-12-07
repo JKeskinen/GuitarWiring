@@ -1,25 +1,30 @@
 {
-  "n_up_probe_black_wire": "Green",
-  "bridge_is_north_up": true,
-  "wiring_ground_color": "#111111",
-  "bridge_use_start_hot": false,
-  "b_up": 7.62,
-  "exp_bridge_south": false,
-  "b_up_probe_red_wire": "Red",
-  "n_lo_swap": false,
-  "probe_red_selection": "Neck Upper — Green",
-  "bridge_south_ohms": 8.0,
-  "b_up_swap": false,
-  "bridge_wire_colors": [
+  "n_lo_probe_red_wire": "White",
+  "edit_bridge_south_expanded": false,
+  "exp_neck_south": false,
+  "neck_is_north_up": true,
+  "b_up_probe": "Normal Phase",
+  "b_lo_probe_red_wire": "White",
+  "bridge_img_choice": "north",
+  "edit_neck_south_expanded": false,
+  "bridge_north_colors": [
     "Red",
-    "White",
-    "Green",
-    "Black"
+    "Green"
   ],
-  "wiring_wire_width": 3,
-  "show_neck_north_selector": false,
+  "bridge_is_north_up": true,
+  "neck_north_colors": [
+    "Red",
+    "Green"
+  ],
+  "n_lo_probe_black_wire": "Black",
   "exp_neck_north": false,
-  "south_is_cw": false,
+  "show_debug_state": false,
+  "edit_bridge_north_expanded": false,
+  "n_lo_probe": "Reverse Phase",
+  "use_ai_responses": false,
+  "n_lo": 3.5,
+  "exp_bridge_north": false,
+  "ai_model": "mistral:7b",
   "analysis": {
     "neck": {
       "HOT": "Red",
@@ -32,10 +37,10 @@
         "Bare"
       ],
       "resistance_kohm": {
-        "north_kohm": 5.91,
-        "south_kohm": 5.95,
-        "series_kohm": 11.86,
-        "parallel_kohm": 2.9649662731871844
+        "north_kohm": 3.5,
+        "south_kohm": 3.5,
+        "series_kohm": 7.0,
+        "parallel_kohm": 1.75
       }
     },
     "bridge": {
@@ -49,83 +54,48 @@
         "Bare"
       ],
       "resistance_kohm": {
-        "north_kohm": 7.62,
-        "south_kohm": 7.65,
-        "series_kohm": 15.27,
-        "parallel_kohm": 3.8174852652259337
+        "north_kohm": 7.7,
+        "south_kohm": 7.7,
+        "series_kohm": 15.4,
+        "parallel_kohm": 3.8500000000000005
       }
     }
   },
-  "neck_use_start_hot": false,
-  "bridge_south_colors": [
-    "White",
-    "Black"
-  ],
-  "neck_img_choice": "north",
-  "north_reverse_phased": false,
-  "n_lo_probe": "Reverse Phase",
-  "neck_south_colors": [
-    "White",
-    "Black"
-  ],
-  "b_lo": 7.65,
-  "b_up_probe": "Normal Phase",
-  "n_lo": 5.95,
-  "edit_neck_north_expanded": false,
-  "probe_black_selection": "Neck Upper — Red",
-  "neck_orientation": "Top = Slug (N) / Bottom = Screw (S)",
-  "b_lo_probe_red_wire": "White",
-  "show_neck_south_selector": false,
-  "bridge_img_choice": "north",
-  "edit_bridge_north_expanded": false,
-  "ai_model": "mistral:7b",
-  "step": 1,
-  "bridge_south_is_cw": false,
-  "n_up_swap": false,
-  "b_lo_probe_black_wire": "Black",
-  "exp_bridge_north": false,
-  "show_debug_state": false,
-  "b_lo_swap": false,
-  "n_lo_probe_red_wire": "White",
-  "wiring_output_color": "#ffd700",
-  "show_bridge_north_selector": false,
-  "neck_is_north_up": true,
-  "edit_bridge_south_expanded": false,
-  "bridge_north_is_cw": false,
-  "n_up": 5.91,
-  "bridge_north_colors": [
-    "Red",
-    "Green"
-  ],
-  "north_is_cw": false,
-  "neck_north_colors": [
-    "Red",
-    "Green"
-  ],
-  "n_up_probe_red_wire": "Red",
-  "b_lo_probe": "Reverse Phase",
-  "n_up_probe": "Normal Phase",
-  "use_ai_responses": true,
-  "exp_neck_south": false,
-  "neck_north_is_cw": false,
-  "n_lo_probe_black_wire": "Black",
-  "south_ohms": 8.0,
-  "show_bridge_south_selector": false,
-  "b_up_probe_black_wire": "Green",
-  "wiring_wire_color": "#ffffff",
-  "bare": true,
-  "north_ohms": 8.0,
-  "neck_north_ohms": 8.0,
-  "bridge_north_ohms": 8.0,
-  "neck_south_is_cw": false,
-  "bridge_orientation": "Top = Slug (N) / Bottom = Screw (S)",
+  "step": 6,
+  "b_up_probe_red_wire": "Red",
+  "n_up": 3.5,
   "neck_wire_colors": [
     "Red",
     "White",
     "Green",
     "Black"
   ],
-  "edit_neck_south_expanded": false,
-  "neck_south_ohms": 8.0,
-  "wiring_marker_outline": "#222222"
+  "neck_orientation": "Top = Slug (N) / Bottom = Screw (S)",
+  "b_lo_probe": "Reverse Phase",
+  "n_up_probe_red_wire": "Red",
+  "bare": true,
+  "n_up_probe_black_wire": "Green",
+  "bridge_wire_colors": [
+    "Red",
+    "White",
+    "Green",
+    "Black"
+  ],
+  "bridge_south_colors": [
+    "Black",
+    "White"
+  ],
+  "neck_south_colors": [
+    "Black",
+    "White"
+  ],
+  "b_up_probe_black_wire": "Green",
+  "neck_img_choice": "north",
+  "b_lo": 7.7,
+  "bridge_orientation": "Top = Slug (N) / Bottom = Screw (S)",
+  "b_up": 7.7,
+  "b_lo_probe_black_wire": "Black",
+  "exp_bridge_south": false,
+  "edit_neck_north_expanded": false,
+  "n_up_probe": "Normal Phase"
 }
