@@ -24,8 +24,15 @@ def start_streamlit():
     """Start the Streamlit web server."""
     try:
         print("Starting Streamlit app...")
+        # Use the virtual environment's Python
+        venv_python = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "Scripts", "python.exe")
+        if os.path.exists(venv_python):
+            python_cmd = venv_python
+        else:
+            python_cmd = sys.executable
+        
         subprocess.run(
-            [sys.executable, "-m", "streamlit", "run", "app/main.py"],
+            [python_cmd, "-m", "streamlit", "run", "app/main.py"],
             check=False
         )
     except KeyboardInterrupt:
