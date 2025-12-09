@@ -878,12 +878,9 @@ def _safe_default_list(options, default):
 
 def _safe_index(options, value):
     """Return index of value in options or 0 when missing/invalid."""
-    try:
-        if value is None:
-            return 0
-        return options.index(value)
-    except Exception:
+    if value is None or value not in options:
         return 0
+    return options.index(value)
 def _render_step_nav():
     # Use on_click callbacks so Streamlit handles the rerun and UI updates immediately
     cols = st.columns([1, 6, 1])
