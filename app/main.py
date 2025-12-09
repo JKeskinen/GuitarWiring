@@ -13,6 +13,7 @@ try:
         infer_start_finish_from_probes,
         compute_electrical_polarity_from_probe,
     )
+    from app.ai_assistant import render_ai_sidebar, init_ai_session_state
 except Exception:
     # fallback when Streamlit runs this file directly (app/ on sys.path)
     from wiring import (
@@ -23,6 +24,7 @@ except Exception:
         infer_start_finish_from_probes,
         compute_electrical_polarity_from_probe,
     )
+    from ai_assistant import render_ai_sidebar, init_ai_session_state
 
 # HTTP helper for local AI health check
 try:
@@ -530,86 +532,24 @@ def _ai_helper_answer(q: str) -> str:
         "Useful references: StewMac (stewmac.com) and Seymour Duncan (seymourduncan.com) have practical wiring and soldering guides."
     )
 
-# Ask question input and button
-question = st.sidebar.text_input('Ask about soldering, hum-cancelling, wiring, or diagnostics', '', key='ai_question')
-def check_local_ai(host: str = None, timeout: float = 1.0) -> dict:
-    """Return dict with keys: available (bool), url (str), details (str).
+# Initialize AI session state and render interactive AI sidebar
+init_ai_session_state()
+render_ai_sidebar()
 
-    Tries to query the local Ollama server root endpoint configured via
-    OLLAMA_HOST or falls back to http://127.0.0.1:11434.
-    """
-    # Determine host from env (keeps consistent with Ollama logs)
-    env_host = None
+
+# Top navigation for steps (Previous / Next)
+MAX_STEP = 6
+def _safe_rerun():
+    """Call Streamlit rerun if available; otherwise no-op."""
     try:
-        env_host = os.environ.get('OLLAMA_HOST')
+        # some Streamlit versions expose experimental_rerun
+        rerun = getattr(st, 'experimental_rerun', None)
+        if callable(rerun):
+            rerun()
     except Exception:
-        env_host = None
-    url = (host or env_host or 'http://127.0.0.1:11434').rstrip('/')
-    result = {'available': False, 'url': url, 'details': ''}
-    # Prefer requests if available, otherwise try urllib
-    if requests is None:
-        try:
-            from urllib.request import urlopen
-            from urllib.error import URLError, HTTPError
-            try:
-                with urlopen(url + '/', timeout=timeout) as r:
-                    code = getattr(r, 'status', None) or getattr(r, 'getcode', lambda: None)()
-                    result['available'] = True if code and int(code) < 500 else False
-                    result['details'] = f'HTTP {code}'
-            except HTTPError as e:
-                result['details'] = f'HTTP Error: {e.code} {e.reason}'
-            except URLError as e:
-                result['details'] = f'URL Error: {e.reason}'
-            except Exception as e:
-                result['details'] = str(e)
-        except Exception as e:
-            result['details'] = f'No HTTP client available: {e}'
-        return result
+        # ignore if not supported in this Streamlit build
+        pass
 
-    try:
-        # Query a lightweight endpoint; root serves a small landing page in Ollama
-        r = requests.get(url + '/', timeout=timeout)
-        result['available'] = r.status_code < 500
-        result['details'] = f'Status {r.status_code}'
-    except requests.exceptions.RequestException as e:
-        result['details'] = str(e)
-    except Exception as e:
-        result['details'] = str(e)
-    return result
-
-# Show local AI connection status in the sidebar (auto-updates every 3 seconds)
-ai_status_placeholder = st.sidebar.empty()
-
-def update_ai_status():
-    try:
-        status = check_local_ai()
-        if status.get('available'):
-            ai_status_placeholder.success(f"Local AI available — {status.get('url')} ({status.get('details')})")
-        else:
-            ai_status_placeholder.warning(f"Local AI not reachable — {status.get('url')} ({status.get('details')})")
-    except Exception as e:
-        try:
-            ai_status_placeholder.error(f"Local AI status check failed: {e}")
-        except Exception:
-            pass
-
-# Initial check
-update_ai_status()
-
-# Auto-refresh status every 3 seconds
-if 'last_ai_check' not in st.session_state:
-    st.session_state['last_ai_check'] = 0
-
-import time
-current_time = time.time()
-if current_time - st.session_state['last_ai_check'] > 3:
-    st.session_state['last_ai_check'] = current_time
-    update_ai_status()
-    # Removed st.rerun() - it was causing state to reset constantly
-
-
-# Generic caller that attempts a few common Ollama endpoints to get text output.
-def call_local_ai(prompt: str, model: str = 'mistral:7b', timeout: float = 6.0) -> dict:
     """Try to call a local Ollama-like server and return {'ok':bool,'text':str,'error':str}.
 
     The function tries multiple common endpoints (/api/generate, /api/chat, /api/completions)
@@ -757,45 +697,7 @@ def call_local_ai(prompt: str, model: str = 'mistral:7b', timeout: float = 6.0) 
 
     # Build a helpful error message including collected diagnostics
     diag_lines = [f"Attempt to call local AI failed. Base URL: {base}"]
-    for a in attempts:
-        diag_lines.append(f"- {a.get('url')} -> {a.get('status')} ; body=" + (str(a.get('body'))[:200] if a.get('body') else '<empty>'))
-    for m in fallback_msgs:
-        diag_lines.append(f"- fallback: {m}")
 
-    return {'ok': False, 'text': '', 'error': '\n'.join(diag_lines)}
-
-# Sidebar: AI responses are always enabled
-st.session_state['ai_model'] = 'mistral:7b'
-st.session_state['use_ai_responses'] = True
-
-# Handle Ask button for AI helper
-ask_button = st.sidebar.button('Ask', key='ask_button')
-
-if ask_button and question.strip():
-    # Store question in session to persist the response
-    st.session_state['last_ai_question'] = question
-    st.session_state['ai_response'] = None  # Reset to show loading
-    
-    # Call AI immediately
-    model = st.session_state.get('ai_model', 'mistral:7b')
-    try:
-        resp = call_local_ai(question, model=model)
-        if resp.get('ok'):
-            st.session_state['ai_response'] = resp.get('text')
-            st.session_state['ai_error'] = None
-        else:
-            st.session_state['ai_error'] = resp.get('error')
-            st.session_state['ai_response'] = _ai_helper_answer(question)
-    except Exception as e:
-        st.session_state['ai_error'] = str(e)
-        st.session_state['ai_response'] = _ai_helper_answer(question)
-
-# Display stored response if available
-if st.session_state.get('ai_response'):
-    st.sidebar.markdown('**Response:**')
-    st.sidebar.markdown(st.session_state['ai_response'])
-    if st.session_state.get('ai_error'):
-        st.sidebar.info(f"Note: {st.session_state['ai_error']}")
 
 # Top navigation for steps (Previous / Next)
 MAX_STEP = 6
