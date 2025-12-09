@@ -31,8 +31,15 @@ def start_streamlit():
         else:
             python_cmd = sys.executable
         
+        # Set environment variables to suppress email prompt
+        env = os.environ.copy()
+        env['STREAMLIT_LOGGER_LEVEL'] = 'error'
+        env['STREAMLIT_CLIENT_SHOWERRORDETAILS'] = 'false'
+        env['STREAMLIT_SERVER_HEADLESS'] = 'true'
+        
         subprocess.run(
             [python_cmd, "-m", "streamlit", "run", "app/main.py"],
+            env=env,
             check=False
         )
     except KeyboardInterrupt:

@@ -176,31 +176,6 @@ for _ek in ('exp_neck_north', 'exp_neck_south', 'exp_bridge_north', 'exp_bridge_
     if _ek not in st.session_state:
         st.session_state[_ek] = False
 
-# Change handlers that auto-collapse the expander only when two colors are selected
-def _on_neck_north_changed():
-    sel = st.session_state.get('neck_north_colors', [])
-    if isinstance(sel, (list, tuple)) and len(sel) == 2:
-        st.session_state['exp_neck_north'] = False
-        _safe_rerun()
-
-def _on_neck_south_changed():
-    sel = st.session_state.get('neck_south_colors', [])
-    if isinstance(sel, (list, tuple)) and len(sel) == 2:
-        st.session_state['exp_neck_south'] = False
-        _safe_rerun()
-
-def _on_bridge_north_changed():
-    sel = st.session_state.get('bridge_north_colors', [])
-    if isinstance(sel, (list, tuple)) and len(sel) == 2:
-        st.session_state['exp_bridge_north'] = False
-        _safe_rerun()
-
-def _on_bridge_south_changed():
-    sel = st.session_state.get('bridge_south_colors', [])
-    if isinstance(sel, (list, tuple)) and len(sel) == 2:
-        st.session_state['exp_bridge_south'] = False
-        _safe_rerun()
-
 # (Removed swap helper at user's request)
 
 st.title('Humbucker Wiring Assistant — Bare Knuckle')
@@ -630,7 +605,7 @@ current_time = time.time()
 if current_time - st.session_state['last_ai_check'] > 3:
     st.session_state['last_ai_check'] = current_time
     update_ai_status()
-    st.rerun()
+    # Removed st.rerun() - it was causing state to reset constantly
 
 
 # Generic caller that attempts a few common Ollama endpoints to get text output.
@@ -993,7 +968,7 @@ with st.expander('Step 4 — Measurements', expanded=(step == 4)):
     cols[0].markdown(_render_color_badges(st.session_state.get('neck_north_colors', [])), unsafe_allow_html=True)
     cols[1].markdown('')
     with st.expander('Edit Neck — Top wire colors', expanded=st.session_state.get('exp_neck_north', False)):
-        st.multiselect('', neck_colors, default=default_neck_top, key='neck_north_colors', on_change=_on_neck_north_changed)
+        st.multiselect('Neck top', neck_colors, default=default_neck_top, key='neck_north_colors', label_visibility='collapsed')
     
 
     # Neck — Bottom / Lower selector: edit via expander
@@ -1001,21 +976,21 @@ with st.expander('Step 4 — Measurements', expanded=(step == 4)):
     cols[0].markdown(_render_color_badges(st.session_state.get('neck_south_colors', [])), unsafe_allow_html=True)
     cols[1].markdown('')
     with st.expander('Neck — Bottom wire colors', expanded=st.session_state.get('exp_neck_south', False)):
-        st.multiselect(' ', [c for c in neck_colors if c not in st.session_state.get('neck_north_colors', [])], default=default_neck_bottom, key='neck_south_colors', on_change=_on_neck_south_changed)
+        st.multiselect('Neck bottom', [c for c in neck_colors if c not in st.session_state.get('neck_north_colors', [])], default=default_neck_bottom, key='neck_south_colors', label_visibility='collapsed')
 
     # Bridge — Top / Upper selector: edit via expander
     cols = st.columns([6, 1])
     cols[0].markdown(_render_color_badges(st.session_state.get('bridge_north_colors', [])), unsafe_allow_html=True)
     cols[1].markdown('')
     with st.expander('Bridge — Top wire colors', expanded=st.session_state.get('exp_bridge_north', False)):
-        st.multiselect('', bridge_colors, default=default_bridge_top, key='bridge_north_colors', on_change=_on_bridge_north_changed)
+        st.multiselect('Bridge top', bridge_colors, default=default_bridge_top, key='bridge_north_colors', label_visibility='collapsed')
 
     # Bridge — Bottom / Lower selector: edit via expander
     cols = st.columns([6, 1])
     cols[0].markdown(_render_color_badges(st.session_state.get('bridge_south_colors', [])), unsafe_allow_html=True)
     cols[1].markdown('')
     with st.expander('Bridge — Bottom wire colors', expanded=st.session_state.get('exp_bridge_south', False)):
-        st.multiselect('', [c for c in bridge_colors if c not in st.session_state.get('bridge_north_colors', [])], default=default_bridge_bottom, key='bridge_south_colors', on_change=_on_bridge_south_changed)
+        st.multiselect('Bridge bottom', [c for c in bridge_colors if c not in st.session_state.get('bridge_north_colors', [])], default=default_bridge_bottom, key='bridge_south_colors', label_visibility='collapsed')
     # validate mapping
     mapping_ok = True
     if len(st.session_state.get('neck_north_colors', [])) != 2 or len(st.session_state.get('neck_south_colors', [])) != 2:

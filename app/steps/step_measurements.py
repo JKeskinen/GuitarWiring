@@ -51,12 +51,9 @@ def step_measurements(st_module):
         new_neck = []
         for i in range(wire_count):
             default_color = defaults[i] if i < len(defaults) else 'Black'
-            current = neck_colors[i] if i < len(neck_colors) else default_color
-            idx = COLOR_OPTIONS.index(current) if current in COLOR_OPTIONS else 0
             color = st.selectbox(
                 f'Wire {i+1}',
                 COLOR_OPTIONS,
-                index=idx,
                 key=f'neck_wire_color_{i}',
                 label_visibility='collapsed'
             )
@@ -68,12 +65,9 @@ def step_measurements(st_module):
         new_bridge = []
         for i in range(wire_count):
             default_color = defaults[i] if i < len(defaults) else 'Black'
-            current = bridge_colors[i] if i < len(bridge_colors) else default_color
-            idx = COLOR_OPTIONS.index(current) if current in COLOR_OPTIONS else 0
             color = st.selectbox(
                 f'Wire {i+1}',
                 COLOR_OPTIONS,
-                index=idx,
                 key=f'bridge_wire_color_{i}',
                 label_visibility='collapsed'
             )
@@ -92,22 +86,18 @@ def step_measurements(st_module):
         st.write('**Neck Pickup**')
         n_up = st.number_input('Upper coil (kΩ)', 
                                min_value=0.0, format='%.2f',
-                               value=st.session_state.get('n_up', 0.0),
                                key='n_up')
         n_lo = st.number_input('Lower coil (kΩ)',
                                min_value=0.0, format='%.2f',
-                               value=st.session_state.get('n_lo', 0.0),
                                key='n_lo')
     
     with col2:
         st.write('**Bridge Pickup**')
         b_up = st.number_input('Upper coil (kΩ)',
                                min_value=0.0, format='%.2f',
-                               value=st.session_state.get('b_up', 0.0),
                                key='b_up')
         b_lo = st.number_input('Lower coil (kΩ)',
                                min_value=0.0, format='%.2f',
-                               value=st.session_state.get('b_lo', 0.0),
                                key='b_lo')
     
     st.markdown('---')
