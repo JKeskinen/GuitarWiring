@@ -18,12 +18,12 @@ class AIAssistant:
         
         # Step guidance prompts
         self.step_guides = {
-            1: "Step 1 - Wiring Mode: Choose how you want to wire your humbuckers (series, parallel, or coil-split). Series gives you fuller tone with both coils, parallel is brighter, and coil-split gives single-coil sound. What would you like to know?",
-            2: "Step 2 - Measurements: Identify your pickup wire colors for each coil. Use a multimeter to measure resistance between wire pairs to find which wires belong to which coil. Don't solder anything yet - we're just identifying wires! Need help with the multimeter?",
-            3: "Step 3 - Switch Configuration: Configure your toggle switch positions. This determines which pickup(s) are active in each switch position. Common setup: neck (rhythm), both (middle), bridge (lead). Questions about switch wiring?",
-            4: "Step 4 - Pole Assignment & Phase Testing: Assign which coil is 'North' (screw side) and which is 'South' (slug side). Use probes to test which wire touched increases resistance - this determines START and FINISH wires. Phase testing is critical for hum-canceling! Need help understanding polarity?",
-            5: "Step 5 - Soldering Instructions: Now it's time to solder! Follow the wiring diagram carefully based on the phase and polarity you discovered. Remember: clean iron tip, heat the joint (not the solder), apply solder to the heated joint, let cool without moving. Want soldering tips?",
-            6: "Step 6 - Summary & Verification: Review your complete wiring configuration. Check all connections match the diagram. Test continuity with multimeter before final installation. Verify phase relationships are correct. Ready to test or need clarification?"
+            1: "Step 1 - Wiring Mode: Choose how you want to wire your humbuckers (series, parallel, or coil-split). Series gives you fuller tone with both coils, parallel is brighter, and coil-split gives single-coil sound. Think of it like choosing your coffee: series is double espresso, parallel is americano, and coil-split is... well, instant coffee. (Just kidding, coil-split is great!) What would you like to know?",
+            2: "Step 2 - Measurements: Identify your pickup wire colors for each coil. Use a multimeter to measure resistance between wire pairs to find which wires belong to which coil. Don't solder anything yet - we're just identifying wires! (Yes, I know you're tempted to start soldering. Resist the urge! Your future self will thank you.) Need help with the multimeter?",
+            3: "Step 3 - Switch Configuration: Configure your toggle switch positions. This determines which pickup(s) are active in each switch position. Common setup: neck (rhythm), both (middle), bridge (lead). Pro tip: if you wire this backwards, your guitar will work... it'll just be hilariously confusing. Questions about switch wiring?",
+            4: "Step 4 - Pole Assignment & Phase Testing: Assign which coil is 'North' (screw side) and which is 'South' (slug side). Use probes to test which wire touched increases resistance - this determines START and FINISH wires. Phase testing is critical for hum-canceling! (Get this wrong and your guitar will hum louder than a bee convention.) Need help understanding polarity?",
+            5: "Step 5 - Soldering Instructions: Now it's time to solder! Follow the wiring diagram carefully based on the phase and polarity you discovered. Remember: clean iron tip, heat the joint (not the solder), apply solder to the heated joint, let cool without moving. Also: ventilation is good (solder fumes are not a flavor enhancer). Want soldering tips?",
+            6: "Step 6 - Summary & Verification: Review your complete wiring configuration. Check all connections match the diagram. Test continuity with multimeter before final installation. Verify phase relationships are correct. This is the 'measure twice, solder once' step (wait, we already soldered... well, measure twice anyway!). Ready to test or need clarification?"
         }
     
     def get_step_guidance(self, step: int) -> str:
@@ -76,7 +76,7 @@ class AIAssistant:
         if wiring_mode:
             context.append(f"- Wiring Mode: {wiring_mode}")
         
-        context.append("\nYou are a helpful guitar pickup wiring assistant. Provide concise, practical advice.")
+        context.append("\nYou are a helpful (and slightly humorous) guitar pickup wiring assistant with a good sense of engineer humor. Provide concise, practical advice with occasional witty comments. Keep it light, but always prioritize accuracy. Think of yourself as the Bob Ross of guitar electronics - happy little wires and no mistakes, just happy accidents.")
         
         return "\n".join(context)
     
@@ -104,11 +104,11 @@ class AIAssistant:
         """Return common questions as suggestion buttons."""
         return [
             "How do I solder pickup wires correctly?",
-            "What causes hum in pickups?",
+            "What causes hum in pickups? 🐝",
             "How do I wire a humbucker in series?",
-            "What's the difference between neck and bridge pickups?",
+            "Why does my guitar sound angry?",
             "How do I test pickup continuity?",
-            "What wire gauge should I use?",
+            "Help! I think I wired something backwards!",
         ]
 
 
@@ -133,6 +133,7 @@ def render_ai_sidebar():
     
     st.sidebar.markdown("---")
     st.sidebar.markdown("## 🤖 AI Assistant")
+    st.sidebar.caption("*Like having a wise guitar tech in your pocket, minus the coffee breath.*")
     
     # Get current step for automatic guidance
     current_step = st.session_state.get('step', 1)

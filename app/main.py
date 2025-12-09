@@ -112,7 +112,7 @@ def _collect_streamed_json_text(resp):
     except Exception:
         return ''
 
-st.set_page_config(page_title='Humbucker Wiring Assistant', layout='wide')
+st.set_page_config(page_title='Humbucker Solver', layout='wide')
 
 if 'step' not in st.session_state:
     st.session_state['step'] = 1
@@ -180,8 +180,44 @@ for _ek in ('exp_neck_north', 'exp_neck_south', 'exp_bridge_north', 'exp_bridge_
 
 # (Removed swap helper at user's request)
 
-st.title('Humbucker Wiring Assistant — Bare Knuckle')
-st.write('A minimal interactive app to map 4-conductor humbuckers (Slug = North, Screw = South).')
+st.title('Humbucker Solver, with AI help')
+st.write('Small program, that help you to solve pickup colors and polarities and wounding. '
+         'Follow steps and you know where to solder wires and if your pickups are in hum cancelling.')
+st.caption('⚡ Because life\'s too short for mysterious wire colors and angry hum. Also, we can\'t guarantee your guitar will sound better, but at least you\'ll know *why* it doesn\'t. 🎸')
+
+# Background music - always embedded, controlled by user
+st.markdown(
+    """
+    <style>
+    #music-player {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        z-index: 9999;
+        background: rgba(30, 30, 30, 0.95);
+        padding: 10px 15px;
+        border-radius: 25px;
+        box-shadow: 0 4px 12px rgba(0,255,255,0.3);
+        border: 1px solid rgba(0,255,255,0.5);
+    }
+    #music-player audio {
+        height: 30px;
+    }
+    #music-player:hover {
+        box-shadow: 0 6px 16px rgba(0,255,255,0.5);
+    }
+    </style>
+    <div id="music-player">
+        <audio controls loop preload="auto" volume="0.15">
+            <source src="https://assets.mixkit.co/music/preview/mixkit-tech-house-vibes-130.mp3" type="audio/mpeg">
+            <source src="https://www.bensound.com/bensound-music/bensound-scifi.mp3" type="audio/mpeg">
+            Your browser does not support audio.
+        </audio>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 # Make inline SVG labels/text visible on dark theme (white)
 st.markdown(
     """
@@ -783,6 +819,274 @@ def _safe_index(options, value):
     if value is None or value not in options:
         return 0
     return options.index(value)
+
+# Helper functions for Step 6 analysis
+def _compute_wiring_order(upper_map: dict, lower_map: dict, wiring_type: str, bare_present: bool = False, upper_phase: str = 'Normal', lower_phase: str = 'Normal') -> dict:
+    """Compute wiring order for given wiring_type.
+
+    upper_map / lower_map are expected to have keys 'start' and 'finish' (wire color names).
+    wiring_type: 'series' | 'parallel' | 'slug_only' | 'screw_only'
+    upper_phase: 'Normal' | 'Reverse' - phase of upper coil
+    lower_phase: 'Normal' | 'Reverse' - phase of lower coil
+
+    Returns a dict with keys: 'output' (list), 'series' (list, only for series), 'ground' (list), 'notes' (str|None).
+    """
+    u_start = upper_map.get('start')
+    u_finish = upper_map.get('finish')
+    l_start = lower_map.get('start')
+    l_finish = lower_map.get('finish')
+
+    order = {'output': [], 'series': [], 'ground': [], 'notes': None}
+
+    if wiring_type == 'series':
+        # SERIES wiring depends on phase:
+        # RWRP (different phases): Coil1 start → HOT, Coil1 end + Coil2 end → LINK, Coil2 start → GROUND
+        # Same phase (both Normal or both Reverse): Coil1 start → HOT, Coil1 end + Coil2 start → LINK, Coil2 end → GROUND
+        if upper_phase != lower_phase:
+            # Different phase (RWRP): connect ends together
+            if u_start:
+                order['output'] = [u_start]
+            order['series'] = [w for w in (u_finish, l_finish) if w]
+            order['ground'] = [w for w in ([l_start] + (['Bare'] if bare_present else [])) if w]
+        else:
+            # Same phase: connect end to start
+            if u_start:
+                order['output'] = [u_start]
+            order['series'] = [w for w in (u_finish, l_start) if w]
+            order['ground'] = [w for w in ([l_finish] + (['Bare'] if bare_present else [])) if w]
+
+    elif wiring_type == 'parallel':
+        # PARALLEL: Coil1 start + Coil2 start → HOT, Coil1 end + Coil2 end → GROUND
+        order['output'] = [w for w in (u_start, l_start) if w]
+        order['ground'] = [w for w in (u_finish, l_finish) if w]
+        if bare_present:
+            order['ground'].append('Bare')
+
+    elif wiring_type == 'slug_only':
+        # SLUG ONLY: North Start → HOT, North Finish + South Start + South Finish → GROUND
+        if u_start:
+            order['output'] = [u_start]
+        order['ground'] = [w for w in (u_finish, l_start, l_finish) if w]
+        if bare_present:
+            order['ground'].append('Bare')
+
+    elif wiring_type == 'screw_only':
+        # SCREW ONLY: Upper coil only - Upper Start → HOT, Upper Finish + Lower Start + Lower Finish → GROUND
+        if u_start:
+            order['output'] = [u_start]
+        order['ground'] = [w for w in (u_finish, l_start, l_finish) if w]
+        if bare_present:
+            order['ground'].append('Bare')
+
+    else:
+        order['notes'] = 'Unknown wiring variant requested.'
+
+    return order
+
+def _calculate_total_resistance(north_res_kohm, south_res_kohm, wiring_type: str) -> float:
+    """Calculate total resistance based on wiring configuration.
+    
+    Args:
+        north_res_kohm: Resistance of north/upper coil in kΩ
+        south_res_kohm: Resistance of south/lower coil in kΩ
+        wiring_type: 'series' | 'parallel' | 'slug_only' | 'screw_only'
+    
+    Returns:
+        Total resistance in kΩ, or None if data is incomplete
+    """
+    if north_res_kohm is None or south_res_kohm is None:
+        return None
+    
+    north = float(north_res_kohm) if north_res_kohm else None
+    south = float(south_res_kohm) if south_res_kohm else None
+    
+    if north is None or south is None:
+        return None
+    
+    if wiring_type == 'series':
+        # Series: resistances add
+        return north + south
+    elif wiring_type == 'parallel':
+        # Parallel: 1/R_total = 1/R1 + 1/R2
+        if north == 0 or south == 0:
+            return None
+        return (north * south) / (north + south)
+    elif wiring_type == 'slug_only':
+        # Only north coil is used
+        return north
+    elif wiring_type == 'screw_only':
+        # Only south coil is used
+        return south
+    else:
+        return None
+
+def _find_candidate(base_name):
+    exts = ['.svg', '.png', '.jpg', '.jpeg']
+    places = [os.path.join('app', 'static'), os.path.join('app'), os.path.join('.')]
+    for p in places:
+        for e in exts:
+            cand = os.path.join(p, base_name + e)
+            if os.path.exists(cand):
+                return cand
+    return None
+
+def render_pickup_preview(which, height=120):
+    """Render the original pickup SVG with the same coloured-ball overlay used in the sidebar.
+
+    `which` is 'neck' or 'bridge'.
+    """
+    north_img = _find_candidate('humbuckerNORTH')
+    south_img = _find_candidate('humbuckerSOUTH')
+    img_path = north_img if (which == 'neck' and st.session_state.get('neck_img_choice', 'north') == 'north') or (which == 'bridge' and st.session_state.get('bridge_img_choice', 'north') == 'north') else south_img
+    if not img_path:
+        st.info('Pickup image not found')
+        return
+    if img_path.lower().endswith('.svg'):
+        try:
+            with open(img_path, 'r', encoding='utf-8') as f:
+                svg_html = f.read()
+            # Tint the pickup SVG background to match the selected top-coil color (if available)
+            try:
+                if which == 'neck':
+                    primary_name = (st.session_state.get('neck_north_colors', []) or [None])[0]
+                else:
+                    primary_name = (st.session_state.get('bridge_north_colors', []) or [None])[0]
+                primary_hex = COLOR_HEX.get(primary_name)
+                if primary_hex:
+                    svg_html = svg_html.replace('#d62728', primary_hex)
+            except Exception:
+                pass
+
+            def _none_if_dash(val):
+                return None if (val is None or (isinstance(val, str) and val.strip() == '--')) else val
+
+            if which == 'neck':
+                upper_map = infer_start_finish_from_probes(
+                    st.session_state.get('neck_north_colors', []),
+                    _none_if_dash(st.session_state.get('n_up_probe_red_wire')),
+                    _none_if_dash(st.session_state.get('n_up_probe_black_wire')),
+                    st.session_state.get('n_up_probe'),
+                    st.session_state.get('n_up_swap', False)
+                )
+                lower_map = infer_start_finish_from_probes(
+                    st.session_state.get('neck_south_colors', []),
+                    _none_if_dash(st.session_state.get('n_lo_probe_red_wire')),
+                    _none_if_dash(st.session_state.get('n_lo_probe_black_wire')),
+                    st.session_state.get('n_lo_probe'),
+                    st.session_state.get('n_lo_swap', False)
+                )
+            else:
+                upper_map = infer_start_finish_from_probes(
+                    st.session_state.get('bridge_north_colors', []),
+                    _none_if_dash(st.session_state.get('b_up_probe_red_wire')),
+                    _none_if_dash(st.session_state.get('b_up_probe_black_wire')),
+                    st.session_state.get('b_up_probe'),
+                    st.session_state.get('b_up_swap', False)
+                )
+                lower_map = infer_start_finish_from_probes(
+                    st.session_state.get('bridge_south_colors', []),
+                    _none_if_dash(st.session_state.get('b_lo_probe_red_wire')),
+                    _none_if_dash(st.session_state.get('b_lo_probe_black_wire')),
+                    st.session_state.get('b_lo_probe'),
+                    st.session_state.get('b_lo_swap', False)
+                )
+
+            COLOR_HEX = {
+                'Red': '#d62728',
+                'White': '#ffffff',
+                'Green': '#2ca02c',
+                'Black': '#111111',
+                'Yellow': '#ffbf00',
+                'Blue': '#1f77b4',
+                'Bare': '#888888'
+            }
+
+            if which == 'neck':
+                top_is_north = st.session_state.get('neck_is_north_up', True)
+            else:
+                top_is_north = st.session_state.get('bridge_is_north_up', True)
+            coilA_pol = 'North' if top_is_north else 'South'
+            coilB_pol = 'South' if top_is_north else 'North'
+
+            def colour_svg_overlay(upper, lower):
+                # Desired visual order (top->bottom): CoilA START, CoilA END, CoilB END, CoilB START
+                vals = [upper.get('start'), upper.get('finish'), lower.get('finish'), lower.get('start')]
+                fills = [COLOR_HEX.get(v, '#cccccc') if v else '#cccccc' for v in vals]
+                texts = [v[0].upper() if v else '?' for v in vals]
+                parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 200" preserveAspectRatio="xMinYMin meet" width="220" height="200">']
+                r = 12
+                left_x = 18
+                default_circle_x = 140
+                line_fraction = 0.6
+                pol_text_offset = 50
+                pol_font_size = 10
+                y_a1 = 36
+                y_a2 = 76
+                y_b1 = 156
+                y_b2 = 196
+                y_positions = [y_a1, y_a2, y_b1, y_b2]
+
+                labels = [
+                    f'{coilA_pol} START +',
+                    f'{coilA_pol} END -',
+                    f'{coilB_pol} END -',
+                    f'{coilB_pol} START +',
+                ]
+
+                for i, (f, t, y) in enumerate(zip(fills, texts, y_positions)):
+                    try:
+                        fl = f.lower()
+                        if fl in ('#ffffff', '#ffbf00'):
+                            line_color = '#cccccc'
+                        elif fl in ('#111111', '#000000'):
+                            line_color = "#000000"
+                        else:
+                            line_color = f
+                    except Exception:
+                        line_color = '#cccccc'
+                    line_end_full = default_circle_x - r - 6
+                    line_end = left_x + int((line_end_full - left_x) * line_fraction)
+                    parts.append(f'<line x1="0" y1="{y}" x2="{left_x}" y2="{y}" stroke="{line_color}" stroke-width="1" stroke-opacity="0.75" />')
+                    parts.append(f'<line x1="{left_x}" y1="{y}" x2="{line_end}" y2="{y}" stroke="{line_color}" stroke-width="1" stroke-opacity="0.75" />')
+                    circle_x = line_end + r + 6
+                    polarity_word = 'Start' if 'start' in labels[i].lower() else 'End'
+                    pol_text_fill = '#ffffff' if f.lower() not in ('#ffffff', '#ffbf00') else '#111111'
+                    parts.append(f'<circle cx="{circle_x}" cy="{y}" r="{r}" fill="{f}" stroke="#222" stroke-width="1" />')
+                    text_fill = '#111111' if f.lower() in ('#ffffff', '#ffbf00') else '#ffffff'
+                    parts.append(f'<text x="{circle_x}" y="{y}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="12" fill="{text_fill}">{t}</text>')
+                    parts.append(f'<text x="{circle_x + r + 10}" y="{y+4}" font-family="sans-serif" font-size="12" fill="#ffffff">{labels[i]}</text>')
+                # Draw a visible connector between the two middle circles (series link)
+                try:
+                    line_end_full = default_circle_x - r - 6
+                    line_end = left_x + int((line_end_full - left_x) * line_fraction)
+                    connector_x = line_end + r + 6
+                    y1 = y_positions[1]
+                    y2 = y_positions[2]
+                    gap = max(6, int((y2 - y1) * 0.18))
+                    y1s = y1 + gap
+                    y2s = y2 - gap
+                    parts.append(f'<line x1="{connector_x}" y1="{y1s}" x2="{connector_x}" y2="{y2s}" stroke="#ffffff" stroke-width="2" stroke-linecap="round" />')
+                    mid_y = int((y1s + y2s) / 2)
+                    series_x = max(left_x + 6, connector_x - (r + 64))
+                    parts.append(f'<text x="{series_x}" y="{mid_y + 4}" font-family="sans-serif" font-size="12" fill="#ffffff">Series</text>')
+                except Exception:
+                    pass
+                parts.append('</svg>')
+                return '\n'.join(parts)
+
+            overlay_html = colour_svg_overlay(upper_map, lower_map)
+            html = f"""
+            <div style="position:relative; width:100%; max-width:560px;">
+              <div style="position:relative; z-index:1;">{svg_html}</div>
+              <div style="position:absolute; right:8px; top:8px; z-index:2; pointer-events:none;">{overlay_html}</div>
+            </div>
+            """
+            components.html(html, height=height)
+        except Exception:
+            st.image(img_path, use_column_width=True)
+    else:
+        st.image(img_path, use_column_width=True)
+
 def _render_step_nav():
     # Use on_click callbacks so Streamlit handles the rerun and UI updates immediately
     cols = st.columns([1, 6, 1])
@@ -800,10 +1104,12 @@ step = st.session_state.get('step', 1)
 with st.expander('Step 1 — Welcome', expanded=(step == 1)):
     st.header('Welcome')
     st.write('Welcome — click the top "Next" to begin wire mapping for your pickups.')
+    st.info('💡 **Engineer tip:** If this app confuses you, don\'t worry — the wires in your guitar are *already* confused. We\'re just here to mediate.')
 
 with st.expander('Step 2 — Define wire colors', expanded=(step == 2)):
     st.header('Step 2 — Define wire colors')
     st.write('Choose up to 4 conductor colors for each pickup (and check bare if present).')
+    st.caption('🌈 Fun fact: Pickup manufacturers use color codes like they\'re playing guitar wire roulette. Red means... something. Probably.')
     COLOR_OPTIONS = ['Red', 'White', 'Green', 'Black', 'Yellow', 'Blue', 'Bare']
     col1 = st.multiselect('Neck wire colors (ordered)', COLOR_OPTIONS,
                           default=_safe_default_list(COLOR_OPTIONS, st.session_state.get('neck_wire_colors', ['Red', 'White', 'Green', 'Black'])),
@@ -817,6 +1123,7 @@ with st.expander('Step 2 — Define wire colors', expanded=(step == 2)):
 with st.expander('Step 3 — Polarity (top of pickup)', expanded=(step == 3)):
     st.header('Step 3 — Polarity (top of pickup)')
     st.write('Use a compass over the pickup (top of pickup). Slug = North coil; Screw = South coil.')
+    st.caption('🧭 Yes, an actual compass. The same technology that helped Vikings navigate... now helps you wire pickups. Progress!')
     neck_toggle = st.checkbox('Neck — top is Slug (N)', value=st.session_state.get('neck_is_north_up', True), key='neck_is_north_up', on_change=_on_neck_toggle)
     bridge_toggle = st.checkbox('Bridge — top is Slug (N)', value=st.session_state.get('bridge_is_north_up', True), key='bridge_is_north_up', on_change=_on_bridge_toggle)
     # Keep the legacy orientation string in session_state for compatibility with other code
@@ -847,6 +1154,7 @@ with st.expander('Step 3 — Polarity (top of pickup)', expanded=(step == 3)):
 with st.expander('Step 4 — Measurements', expanded=(step == 4)):
     st.header('Step 4 — Measurements')
     st.write('Enter coil resistances found in Step 5 measurement (kΩ).')
+    st.caption('📊 Resistance is NOT futile — it\'s actually around 5-15 kΩ per coil. Physics: 1, Inspirational quotes: 0.')
     n_up = st.number_input('Neck — upper coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('n_up', 0.0), key='n_up')
     n_lo = st.number_input('Neck — lower coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('n_lo', 0.0), key='n_lo')
     b_up = st.number_input('Bridge — upper coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('b_up', 0.0), key='b_up')
@@ -904,6 +1212,7 @@ with st.expander('Step 4 — Measurements', expanded=(step == 4)):
         st.info('Please fix the mapping warnings above. Select exactly 2 colors per coil before proceeding.')
 with st.expander('Step 5 — Phase checks', expanded=(step == 5)):
     st.header('Step 5 — Phase checks (touch pole piece)')
+    st.caption('🔬 Time to channel your inner scientist! Touch pole pieces with a multimeter. If the needle goes up, congrats — you found "Normal" phase. If it goes down, you found "Reverse" (or as we call it, "the pickup is feeling rebellious today").')
     # Probe→Wire mapping: let the user indicate which wire each probe contacted
     st.subheader('Probe → Wire mapping')
     st.write(f"Start from NECK-{n_pol['top']} and finish mapping to BRIDGE-{n_pol['bottom']}. Select which wire the RED probe touched and which wire the BLACK probe touched.")
@@ -1005,6 +1314,11 @@ with st.expander('Step 5 — Phase checks', expanded=(step == 5)):
         # best-effort preview; ignore errors
         pass
 
+with st.expander('Step 6 — Analyze Wiring', expanded=(step == 6)):
+    st.header('Step 6 — Analyze Wiring & Generate Diagram')
+    st.write('Review your phase testing results and generate the final wiring diagram.')
+    st.caption('🎯 The moment of truth! Let\'s see if these pickups will hum-cancel or just... hum. (Spoiler: if they hum, blame the manufacturer, not the app. We\'re just the messenger.)')
+    
     if st.button('Analyze wiring'):
         # Gather inputs and run analysis
         neck_pair = st.session_state.get('neck_north_colors', [])
@@ -1048,1016 +1362,577 @@ with st.expander('Step 5 — Phase checks', expanded=(step == 5)):
         )
         st.session_state['analysis'] = {'neck': analysis_neck, 'bridge': analysis_bridge}
         _save_state()
-        st.session_state['step'] = 6
-        _safe_rerun()
+        st.success('✅ Analysis complete! Scroll down to see your wiring diagram.')
 
-    # Quick-rule: apply North-reverse assumption
-    def _apply_north_reverse_rule():
-        # mark north (top) coil as reverse and south (bottom) as normal
-        st.session_state['north_reverse_phased'] = True
-        # set probe radio answers: North reversed, South normal
-        # These strings match the options used in the radio widgets
-        st.session_state['n_up_probe'] = 'Laskee (käänteinen)'
-        st.session_state['n_lo_probe'] = 'Nousee (normaali)'
-        # ensure swap flags are off by default (user can adjust)
-        st.session_state['n_up_swap'] = False
-        st.session_state['n_lo_swap'] = False
-
-        # recompute analysis using existing color selections and probe->wire choices
-        def _none_if_dash(val):
-            return None if (val is None or (isinstance(val, str) and val.strip() == '--')) else val
-
-        neck_pair = st.session_state.get('neck_north_colors', [])
-        south_pair = st.session_state.get('neck_south_colors', [])
-        bridge_north = st.session_state.get('bridge_north_colors', [])
-        bridge_south = st.session_state.get('bridge_south_colors', [])
-
-        analysis_neck = analyze_pickup(
-            neck_pair,
-            south_pair,
-            st.session_state.get('n_up_probe'),
-            st.session_state.get('n_lo_probe'),
-            north_swap=st.session_state.get('n_up_swap'),
-            south_swap=st.session_state.get('n_lo_swap'),
-            bare=st.session_state.get('bare'),
-            north_res_kohm=st.session_state.get('n_up'),
-            south_res_kohm=st.session_state.get('n_lo'),
-            north_red_wire=_none_if_dash(st.session_state.get('n_up_probe_red_wire')),
-            north_black_wire=_none_if_dash(st.session_state.get('n_up_probe_black_wire')),
-            south_red_wire=_none_if_dash(st.session_state.get('n_lo_probe_red_wire')),
-            south_black_wire=_none_if_dash(st.session_state.get('n_lo_probe_black_wire')),
-        )
-
-        analysis_bridge = analyze_pickup(
-            bridge_north,
-            bridge_south,
-            st.session_state.get('b_up_probe'),
-            st.session_state.get('b_lo_probe'),
-            north_swap=st.session_state.get('b_up_swap'),
-            south_swap=st.session_state.get('b_lo_swap'),
-            bare=st.session_state.get('bare'),
-            north_res_kohm=st.session_state.get('b_up'),
-            south_res_kohm=st.session_state.get('b_lo'),
-            north_red_wire=_none_if_dash(st.session_state.get('b_up_probe_red_wire')),
-            north_black_wire=_none_if_dash(st.session_state.get('b_up_probe_black_wire')),
-            south_red_wire=_none_if_dash(st.session_state.get('b_lo_probe_red_wire')),
-            south_black_wire=_none_if_dash(st.session_state.get('b_lo_probe_black_wire')),
-        )
-
-        st.session_state['analysis'] = {'neck': analysis_neck, 'bridge': analysis_bridge}
-        _save_state()
-        # stay on the same step but show a short success message
-        st.success('Applied North-reverse rule and recomputed analysis.')
-
-
-# Step 6: Show analysis
-def _compute_wiring_order(upper_map: dict, lower_map: dict, wiring_type: str, bare_present: bool = False, upper_phase: str = 'Normal', lower_phase: str = 'Normal') -> dict:
-    """Compute wiring order for given wiring_type.
-
-    upper_map / lower_map are expected to have keys 'start' and 'finish' (wire color names).
-    wiring_type: 'series' | 'parallel' | 'slug_only' | 'screw_only'
-    upper_phase: 'Normal' | 'Reverse' - phase of upper coil
-    lower_phase: 'Normal' | 'Reverse' - phase of lower coil
-
-    Returns a dict with keys: 'output' (list), 'series' (list, only for series), 'ground' (list), 'notes' (str|None).
-    """
-    u_start = upper_map.get('start')
-    u_finish = upper_map.get('finish')
-    l_start = lower_map.get('start')
-    l_finish = lower_map.get('finish')
-
-    order = {'output': [], 'series': [], 'ground': [], 'notes': None}
-
-    if wiring_type == 'series':
-        # SERIES wiring depends on phase:
-        # RWRP (different phases): Coil1 start → HOT, Coil1 end + Coil2 end → LINK, Coil2 start → GROUND
-        # Same phase (both Normal or both Reverse): Coil1 start → HOT, Coil1 end + Coil2 start → LINK, Coil2 end → GROUND
-        if upper_phase != lower_phase:
-            # Different phase (RWRP): connect ends together
-            if u_start:
-                order['output'] = [u_start]
-            order['series'] = [w for w in (u_finish, l_finish) if w]
-            order['ground'] = [w for w in ([l_start] + (['Bare'] if bare_present else [])) if w]
-        else:
-            # Same phase: connect end to start
-            if u_start:
-                order['output'] = [u_start]
-            order['series'] = [w for w in (u_finish, l_start) if w]
-            order['ground'] = [w for w in ([l_finish] + (['Bare'] if bare_present else [])) if w]
-            order['series'] = [w for w in (u_finish, l_start) if w]
-            order['ground'] = [w for w in ([l_finish] + (['Bare'] if bare_present else [])) if w]
-
-    elif wiring_type == 'parallel':
-        # PARALLEL: Coil1 start + Coil2 start → HOT, Coil1 end + Coil2 end → GROUND
-        order['output'] = [w for w in (u_start, l_start) if w]
-        order['ground'] = [w for w in (u_finish, l_finish) if w]
-        if bare_present:
-            order['ground'].append('Bare')
-
-    elif wiring_type == 'slug_only':
-        # SLUG ONLY: North Start → HOT, North Finish + South Start + South Finish → GROUND
-        if u_start:
-            order['output'] = [u_start]
-        order['ground'] = [w for w in (u_finish, l_start, l_finish) if w]
-        if bare_present:
-            order['ground'].append('Bare')
-
-    elif wiring_type == 'screw_only':
-            # SCREW ONLY: Upper coil only - Upper Start → HOT, Upper Finish + Lower Start + Lower Finish → GROUND
-            if u_start:
-                order['output'] = [u_start]
-            order['ground'] = [w for w in (u_finish, l_start, l_finish) if w]
-            if bare_present:
-                order['ground'].append('Bare')
-
-    else:
-        order['notes'] = 'Unknown wiring variant requested.'
-
-    return order
-
-def _calculate_total_resistance(north_res_kohm, south_res_kohm, wiring_type: str) -> float:
-    """Calculate total resistance based on wiring configuration.
-    
-    Args:
-        north_res_kohm: Resistance of north/upper coil in kΩ
-        south_res_kohm: Resistance of south/lower coil in kΩ
-        wiring_type: 'series' | 'parallel' | 'slug_only' | 'screw_only'
-    
-    Returns:
-        Total resistance in kΩ, or None if data is incomplete
-    """
-    if north_res_kohm is None or south_res_kohm is None:
-        return None
-    
-    north = float(north_res_kohm) if north_res_kohm else None
-    south = float(south_res_kohm) if south_res_kohm else None
-    
-    if north is None or south is None:
-        return None
-    
-    if wiring_type == 'series':
-        # Series: resistances add
-        return north + south
-    elif wiring_type == 'parallel':
-        # Parallel: 1/R_total = 1/R1 + 1/R2
-        if north == 0 or south == 0:
-            return None
-        return (north * south) / (north + south)
-    elif wiring_type == 'slug_only':
-        # Only north coil is used
-        return north
-    elif wiring_type == 'screw_only':
-        # Only south coil is used
-        return south
-    else:
-        return None
-
-def _find_candidate(base_name):
-    exts = ['.svg', '.png', '.jpg', '.jpeg']
-    places = [os.path.join('app', 'static'), os.path.join('app'), os.path.join('.')]
-    for p in places:
-        for e in exts:
-            cand = os.path.join(p, base_name + e)
-            if os.path.exists(cand):
-                return cand
-    return None
-
-
-def render_pickup_preview(which, height=120):
-    """Render the original pickup SVG with the same coloured-ball overlay used in the sidebar.
-
-    `which` is 'neck' or 'bridge'.
-    """
-    north_img = _find_candidate('humbuckerNORTH')
-    south_img = _find_candidate('humbuckerSOUTH')
-    img_path = north_img if (which == 'neck' and st.session_state.get('neck_img_choice', 'north') == 'north') or (which == 'bridge' and st.session_state.get('bridge_img_choice', 'north') == 'north') else south_img
-    if not img_path:
-        st.info('Pickup image not found')
-        return
-    if img_path.lower().endswith('.svg'):
+    # Display analysis results if available
+    analysis = st.session_state.get('analysis', {})
+    if analysis:
+        neck = analysis.get('neck')
+        bridge = analysis.get('bridge')
+        
+        st.header('Neck pickup')
+        # Recompute mapping so we can show explicit START/END labels
         try:
-            with open(img_path, 'r', encoding='utf-8') as f:
-                svg_html = f.read()
-            # Tint the pickup SVG background to match the selected top-coil color (if available)
-            try:
-                if which == 'neck':
-                    primary_name = (st.session_state.get('neck_north_colors', []) or [None])[0]
-                else:
-                    primary_name = (st.session_state.get('bridge_north_colors', []) or [None])[0]
-                primary_hex = COLOR_HEX.get(primary_name)
-                if primary_hex:
-                    svg_html = svg_html.replace('#d62728', primary_hex)
-            except Exception:
-                pass
+            neck_upper_map = infer_start_finish_from_probes(
+                st.session_state.get('neck_north_colors', []),
+                st.session_state.get('n_up_probe_red_wire'),
+                st.session_state.get('n_up_probe_black_wire'),
+                st.session_state.get('n_up_probe'),
+                st.session_state.get('n_up_swap', False)
+            )
+            neck_lower_map = infer_start_finish_from_probes(
+                st.session_state.get('neck_south_colors', []),
+                st.session_state.get('n_lo_probe_red_wire'),
+                st.session_state.get('n_lo_probe_black_wire'),
+                st.session_state.get('n_lo_probe'),
+                st.session_state.get('n_lo_swap', False)
+            )
+            st.write(f"NORTH Start: {neck_upper_map.get('start')}")
+            st.write(f"NORTH End: {neck_upper_map.get('finish')}")
+            st.write(f"SOUTH End: {neck_lower_map.get('finish')}")
+            st.write(f"SOUTH Start: {neck_lower_map.get('start')}")
+            
+        except Exception:
+            st.write(neck)
+        render_pickup_preview('neck', height=240)
 
+        # Show explicit wiring suggestion for the neck based on analysis result
+        try:
+            # Recompute start/finish mappings so we can let the user choose which end is HOT
             def _none_if_dash(val):
                 return None if (val is None or (isinstance(val, str) and val.strip() == '--')) else val
 
-            if which == 'neck':
-                upper_map = infer_start_finish_from_probes(
-                    st.session_state.get('neck_north_colors', []),
-                    _none_if_dash(st.session_state.get('n_up_probe_red_wire')),
-                    _none_if_dash(st.session_state.get('n_up_probe_black_wire')),
-                    st.session_state.get('n_up_probe'),
-                    st.session_state.get('n_up_swap', False)
-                )
-                lower_map = infer_start_finish_from_probes(
-                    st.session_state.get('neck_south_colors', []),
-                    _none_if_dash(st.session_state.get('n_lo_probe_red_wire')),
-                    _none_if_dash(st.session_state.get('n_lo_probe_black_wire')),
-                    st.session_state.get('n_lo_probe'),
-                    st.session_state.get('n_lo_swap', False)
-                )
-            else:
-                upper_map = infer_start_finish_from_probes(
-                    st.session_state.get('bridge_north_colors', []),
-                    _none_if_dash(st.session_state.get('b_up_probe_red_wire')),
-                    _none_if_dash(st.session_state.get('b_up_probe_black_wire')),
-                    st.session_state.get('b_up_probe'),
-                    st.session_state.get('b_up_swap', False)
-                )
-                lower_map = infer_start_finish_from_probes(
-                    st.session_state.get('bridge_south_colors', []),
-                    _none_if_dash(st.session_state.get('b_lo_probe_red_wire')),
-                    _none_if_dash(st.session_state.get('b_lo_probe_black_wire')),
-                    st.session_state.get('b_lo_probe'),
-                    st.session_state.get('b_lo_swap', False)
-                )
+            neck_upper_map = infer_start_finish_from_probes(
+                st.session_state.get('neck_north_colors', []),
+                _none_if_dash(st.session_state.get('n_up_probe_red_wire')),
+                _none_if_dash(st.session_state.get('n_up_probe_black_wire')),
+                st.session_state.get('n_up_probe'),
+                st.session_state.get('n_up_swap', False)
+            )
+            neck_lower_map = infer_start_finish_from_probes(
+                st.session_state.get('neck_south_colors', []),
+                _none_if_dash(st.session_state.get('n_lo_probe_red_wire')),
+                _none_if_dash(st.session_state.get('n_lo_probe_black_wire')),
+                st.session_state.get('n_lo_probe'),
+                st.session_state.get('n_lo_swap', False)
+            )
 
-            COLOR_HEX = {
-                'Red': '#d62728',
-                'White': '#ffffff',
-                'Green': '#2ca02c',
-                'Black': '#111111',
-                'Yellow': '#ffbf00',
-                'Blue': '#1f77b4',
-                'Bare': '#888888'
-            }
+            # Determine probe polarity (reverse vs normal) using user's rule:
+            def _probe_is_reverse(choice):
+                if not choice:
+                    return False
+                c = str(choice).lower()
+                return any(k in c for k in ('laskee', 'drop', 'decrease', 'fall', 'reverse', 'käänte'))
 
-            if which == 'neck':
-                top_is_north = st.session_state.get('neck_is_north_up', True)
-            else:
-                top_is_north = st.session_state.get('bridge_is_north_up', True)
-            coilA_pol = 'North' if top_is_north else 'South'
-            coilB_pol = 'South' if top_is_north else 'North'
+            neck_north_phase = 'Reverse' if _probe_is_reverse(st.session_state.get('n_up_probe')) else 'Normal'
+            neck_south_phase = 'Reverse' if _probe_is_reverse(st.session_state.get('n_lo_probe')) else 'Normal'
 
-            def colour_svg_overlay(upper, lower):
-                # Desired visual order (top->bottom): CoilA START, CoilA END, CoilB END, CoilB START
-                vals = [upper.get('start'), upper.get('finish'), lower.get('finish'), lower.get('start')]
-                fills = [COLOR_HEX.get(v, '#cccccc') if v else '#cccccc' for v in vals]
-                texts = [v[0].upper() if v else '?' for v in vals]
-                parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 200" preserveAspectRatio="xMinYMin meet" width="220" height="200">']
-                r = 12
-                left_x = 18
-                default_circle_x = 140
-                line_fraction = 0.6
-                # vertical offset for polarity text (Start/End) relative to the ball radius
-                # increase this to move the text higher above the ball
-                pol_text_offset = 50
-                pol_font_size = 10
-                y_a1 = 36
-                y_a2 = 76
-                y_b1 = 156
-                y_b2 = 196
-                y_positions = [y_a1, y_a2, y_b1, y_b2]
+            neck_north_res = st.session_state.get('n_up')
+            neck_south_res = st.session_state.get('n_lo')
 
-                labels = [
-                    f'{coilA_pol} START +',
-                    f'{coilA_pol} END -',
-                    f'{coilB_pol} END -',
-                    f'{coilB_pol} START +',
-                    
-                ]
+            # Let user select wiring type for neck pickup
+            neck_wiring_choice = st.selectbox(
+                'Neck pickup wiring:',
+                ['series', 'parallel', 'slug_only', 'screw_only'],
+                index=0,
+                key='neck_wiring_choice'
+            )
 
-                for i, (f, t, y) in enumerate(zip(fills, texts, y_positions)):
-                    try:
-                        fl = f.lower()
-                        if fl in ('#ffffff', '#ffbf00'):
-                            line_color = '#cccccc'
-                        elif fl in ('#111111', '#000000'):
-                            line_color = "#000000"
-                        else:
-                            line_color = f
-                    except Exception:
-                        line_color = '#cccccc'
-                    line_end_full = default_circle_x - r - 6
-                    line_end = left_x + int((line_end_full - left_x) * line_fraction)
-                    # short stub from left edge to the left anchor so the overlay wires appear connected to the pickup
-                    parts.append(f'<line x1="0" y1="{y}" x2="{left_x}" y2="{y}" stroke="{line_color}" stroke-width="1" stroke-opacity="0.75" />')
-                    parts.append(f'<line x1="{left_x}" y1="{y}" x2="{line_end}" y2="{y}" stroke="{line_color}" stroke-width="1" stroke-opacity="0.75" />')
-                    circle_x = line_end + r + 6
-                    polarity_word = 'Start' if 'start' in labels[i].lower() else 'End'
-                    pol_text_fill = '#ffffff' if f.lower() not in ('#ffffff', '#ffbf00') else '#111111'
-                    # small polarity labels removed (keep descriptive labels on the right)
-                    parts.append(f'<circle cx="{circle_x}" cy="{y}" r="{r}" fill="{f}" stroke="#222" stroke-width="1" />')
-                    text_fill = '#111111' if f.lower() in ('#ffffff', '#ffbf00') else '#ffffff'
-                    parts.append(f'<text x="{circle_x}" y="{y}" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="12" fill="{text_fill}">{t}</text>')
-                    parts.append(f'<text x="{circle_x + r + 10}" y="{y+4}" font-family="sans-serif" font-size="12" fill="#ffffff">{labels[i]}</text>')
-                # Draw a visible connector between the two middle circles (series link)
-                try:
-                    line_end_full = default_circle_x - r - 6
-                    line_end = left_x + int((line_end_full - left_x) * line_fraction)
-                    connector_x = line_end + r + 6
-                    y1 = y_positions[1]
-                    y2 = y_positions[2]
-                    # shorten series connector to avoid overlapping descriptive labels
-                    gap = max(6, int((y2 - y1) * 0.18))
-                    y1s = y1 + gap
-                    y2s = y2 - gap
-                    parts.append(f'<line x1="{connector_x}" y1="{y1s}" x2="{connector_x}" y2="{y2s}" stroke="#ffffff" stroke-width="2" stroke-linecap="round" />')
-                    mid_y = int((y1s + y2s) / 2)
-                    series_x = max(left_x + 6, connector_x - (r + 64))
-                    parts.append(f'<text x="{series_x}" y="{mid_y + 4}" font-family="sans-serif" font-size="12" fill="#ffffff">Series</text>')
-                except Exception:
-                    pass
-                parts.append('</svg>')
-                return '\n'.join(parts)
+            bare_present = st.session_state.get('bare', False)
 
-            overlay_html = colour_svg_overlay(upper_map, lower_map)
-            html = f"""
-            <div style="position:relative; width:100%; max-width:560px;">
-              <div style="position:relative; z-index:1;">{svg_html}</div>
-              <div style="position:absolute; right:8px; top:8px; z-index:2; pointer-events:none;">{overlay_html}</div>
-            </div>
-            """
-            components.html(html, height=height)
-        except Exception:
-            st.image(img_path, use_column_width=True)
-    else:
-        st.image(img_path, use_column_width=True)
-if st.session_state['step'] == 6:
-    st.header('Analysis & Wiring Guidance')
-    analysis = st.session_state.get('analysis', {})
-    neck = analysis.get('neck')
-    bridge = analysis.get('bridge')
-    st.header('Neck pickup')
-    # Recompute mapping so we can show explicit START/END labels
-    try:
-        neck_upper_map = infer_start_finish_from_probes(
-            st.session_state.get('neck_north_colors', []),
-            st.session_state.get('n_up_probe_red_wire'),
-            st.session_state.get('n_up_probe_black_wire'),
-            st.session_state.get('n_up_probe'),
-            st.session_state.get('n_up_swap', False)
-        )
-        neck_lower_map = infer_start_finish_from_probes(
-            st.session_state.get('neck_south_colors', []),
-            st.session_state.get('n_lo_probe_red_wire'),
-            st.session_state.get('n_lo_probe_black_wire'),
-            st.session_state.get('n_lo_probe'),
-            st.session_state.get('n_lo_swap', False)
-        )
-        st.write(f"NORTH Start: {neck_upper_map.get('start')}")
-        st.write(f"NORTH End: {neck_upper_map.get('finish')}")
-        st.write(f"SOUTH End: {neck_lower_map.get('finish')}")
-        st.write(f"SOUTH Start: {neck_lower_map.get('start')}")
-        
-    except Exception:
-        st.write(neck)
-    render_pickup_preview('neck', height=240)
+            # Calculate expected resistance for this configuration
+            neck_total_res = _calculate_total_resistance(neck_north_res, neck_south_res, neck_wiring_choice)
 
-    # Show explicit wiring suggestion for the neck based on analysis result
-    try:
-        # Recompute start/finish mappings so we can let the user choose which end is HOT
-        def _none_if_dash(val):
-            return None if (val is None or (isinstance(val, str) and val.strip() == '--')) else val
+            # Show which coil is which magnet type
+            neck_north_magnet = 'Slug (North)' if 'Slug' in str(st.session_state.get('neck_north_colors', [''])[0]) else 'Screw (South)'
+            neck_south_magnet = 'Screw (South)' if neck_north_magnet == 'Slug (North)' else 'Slug (North)'
 
-        neck_upper_map = infer_start_finish_from_probes(
-            st.session_state.get('neck_north_colors', []),
-            _none_if_dash(st.session_state.get('n_up_probe_red_wire')),
-            _none_if_dash(st.session_state.get('n_up_probe_black_wire')),
-            st.session_state.get('n_up_probe'),
-            st.session_state.get('n_up_swap', False)
-        )
-        neck_lower_map = infer_start_finish_from_probes(
-            st.session_state.get('neck_south_colors', []),
-            _none_if_dash(st.session_state.get('n_lo_probe_red_wire')),
-            _none_if_dash(st.session_state.get('n_lo_probe_black_wire')),
-            st.session_state.get('n_lo_probe'),
-            st.session_state.get('n_lo_swap', False)
-        )
+            st.markdown(f"""
+            **Upper Coil:** {neck_north_magnet}, Phase: {neck_north_phase}, Resistance: {neck_north_res} kΩ  
+            **Lower Coil:** {neck_south_magnet}, Phase: {neck_south_phase}, Resistance: {neck_south_res} kΩ  
+            **Total Resistance ({neck_wiring_choice}):** {round(neck_total_res, 2) if neck_total_res else 'N/A'} kΩ
+            """)
 
-        # Determine probe polarity (reverse vs normal) using user's rule:
-        def _probe_is_reverse(choice):
-            if not choice:
-                return False
-            c = str(choice).lower()
-            return any(k in c for k in ('laskee', 'drop', 'decrease', 'fall', 'reverse', 'käänte'))
+            neck_order = _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase)
+            st.markdown(f"""
+            **Output (HOT):** {', '.join(neck_order.get('output', []))}  
+            **Series link:** {', '.join(neck_order.get('series', [])) if neck_order.get('series') else 'N/A'}  
+            **Ground:** {', '.join(neck_order.get('ground', []))}
+            """)
 
-        # Helper to map start/finish from which multimeter lead was on which wire
-        def _map_start_finish_from_probes(red_wire, black_wire, probe_choice, swap_flag, fallback_map):
-            r = red_wire
-            b = black_wire
-            # If both probe-wire names are present and a probe reading exists, use the user's rule:
-            if r and b and probe_choice:
-                if _probe_is_reverse(probe_choice):
-                    # reverse: negative lead wire (black probe) is Start, positive lead (red probe) is Finish
-                    start, finish = b, r
-                else:
-                    # normal: positive lead wire (red probe) is Start, negative lead is Finish
-                    start, finish = r, b
-            else:
-                # fall back to previous inference
-                start = fallback_map.get('start')
-                finish = fallback_map.get('finish')
+        except Exception as e:
+            st.error(f"Error computing neck wiring: {e}")
 
-            if swap_flag:
-                start, finish = finish, start
-
-            return start, finish
-
-        # Neck upper (north) mapping
-        n_up_red = _none_if_dash(st.session_state.get('n_up_probe_red_wire'))
-        n_up_black = _none_if_dash(st.session_state.get('n_up_probe_black_wire'))
-        north_start, north_finish = _map_start_finish_from_probes(
-            n_up_red,
-            n_up_black,
-            st.session_state.get('n_up_probe'),
-            st.session_state.get('n_up_swap', False),
-            neck_upper_map
-        )
-
-        # Neck lower (south) mapping
-        n_lo_red = _none_if_dash(st.session_state.get('n_lo_probe_red_wire'))
-        n_lo_black = _none_if_dash(st.session_state.get('n_lo_probe_black_wire'))
-        south_start, south_finish = _map_start_finish_from_probes(
-            n_lo_red,
-            n_lo_black,
-            st.session_state.get('n_lo_probe'),
-            st.session_state.get('n_lo_swap', False),
-            neck_lower_map
-        )
-
-        # Mapping: North START == HOT, North END == Series, South END == SERIES, South START == GROUND
-        hot = north_start or '<unknown>'
-        series_link = [s for s in ([north_finish, south_finish]) if s]
-        ground = [g for g in ([south_start, 'Bare'] if st.session_state.get('bare') else [south_start]) if g]
-
-        st.markdown('**Suggested wiring (Neck)**')
-        st.write(f"{hot}-HOT -> SWITCH: ")
-        if series_link:
-            st.write(f"- Series link (solder together and insulate): {', '.join(series_link)}")
-        else:
-            st.write('- Series link: <none>')
-        if ground:
-            st.write(f"- Ground : {', '.join(ground)}")
-        else:
-            st.write('- Ground: <none>')
-
-        # Small illustrative SVG showing HOT (red), Series connector, and Ground (white)
+        st.header('Bridge pickup')
         try:
-            hot_col = COLOR_HEX.get(hot, '#d62728') if isinstance(hot, str) else '#d62728'
-            # pick series colors (use first two in series_link or defaults)
-            s1 = series_link[0] if series_link and len(series_link) > 0 else 'White'
-            s2 = series_link[1] if series_link and len(series_link) > 1 else 'Green'
+            bridge_upper_map = infer_start_finish_from_probes(
+                st.session_state.get('bridge_north_colors', []),
+                st.session_state.get('b_up_probe_red_wire'),
+                st.session_state.get('b_up_probe_black_wire'),
+                st.session_state.get('b_up_probe'),
+                st.session_state.get('b_up_swap', False)
+            )
+            bridge_lower_map = infer_start_finish_from_probes(
+                st.session_state.get('bridge_south_colors', []),
+                st.session_state.get('b_lo_probe_red_wire'),
+                st.session_state.get('b_lo_probe_black_wire'),
+                st.session_state.get('b_lo_probe'),
+                st.session_state.get('b_lo_swap', False)
+            )
+            st.write(f"NORTH Start: {bridge_upper_map.get('start')}")
+            st.write(f"NORTH End: {bridge_upper_map.get('finish')}")
+            st.write(f"SOUTH End: {bridge_lower_map.get('finish')}")
+            st.write(f"SOUTH Start: {bridge_lower_map.get('start')}")
         except Exception:
-            pass
-        st.markdown('**Neck — Step-by-step**')
-        st.write('1. Solder the HOT wire to SWITCH.')
-        if series_link:
-            st.write('2. Solder the two series-link wires together to the switch. (This forms the coil series). Insulate this join with heatshrink or tape unless it is the output.')
-        st.write('3. Solder the GROUND wire and BARE to the pot.')
-        st.markdown('---')
-    except Exception:
-        pass
+            st.write(bridge)
+        render_pickup_preview('bridge', height=240)
 
-    st.header('Bridge pickup')
-    try:
-        bridge_upper_map = infer_start_finish_from_probes(
-            st.session_state.get('bridge_north_colors', []),
-            st.session_state.get('b_up_probe_red_wire'),
-            st.session_state.get('b_up_probe_black_wire'),
-            st.session_state.get('b_up_probe'),
-            st.session_state.get('b_up_swap', False)
+        # Show explicit wiring suggestion for bridge
+        try:
+            def _none_if_dash(val):
+                return None if (val is None or (isinstance(val, str) and val.strip() == '--')) else val
+
+            upper_map = infer_start_finish_from_probes(
+                st.session_state.get('bridge_north_colors', []),
+                _none_if_dash(st.session_state.get('b_up_probe_red_wire')),
+                _none_if_dash(st.session_state.get('b_up_probe_black_wire')),
+                st.session_state.get('b_up_probe'),
+                st.session_state.get('b_up_swap', False)
+            )
+            lower_map = infer_start_finish_from_probes(
+                st.session_state.get('bridge_south_colors', []),
+                _none_if_dash(st.session_state.get('b_lo_probe_red_wire')),
+                _none_if_dash(st.session_state.get('b_lo_probe_black_wire')),
+                st.session_state.get('b_lo_probe'),
+                st.session_state.get('b_lo_swap', False)
+            )
+
+            def _probe_is_reverse(choice):
+                if not choice:
+                    return False
+                c = str(choice).lower()
+                return any(k in c for k in ('laskee', 'drop', 'decrease', 'fall', 'reverse', 'käänte'))
+
+            bridge_north_phase = 'Reverse' if _probe_is_reverse(st.session_state.get('b_up_probe')) else 'Normal'
+            bridge_south_phase = 'Reverse' if _probe_is_reverse(st.session_state.get('b_lo_probe')) else 'Normal'
+
+            bridge_north_res = st.session_state.get('b_up')
+            bridge_south_res = st.session_state.get('b_lo')
+
+            bridge_wiring_choice = st.selectbox(
+                'Bridge pickup wiring:',
+                ['series', 'parallel', 'slug_only', 'screw_only'],
+                index=0,
+                key='bridge_wiring_choice'
+            )
+
+            bare_present = st.session_state.get('bare', False)
+
+            bridge_total_res = _calculate_total_resistance(bridge_north_res, bridge_south_res, bridge_wiring_choice)
+
+            bridge_north_magnet = 'Slug (North)' if 'Slug' in str(st.session_state.get('bridge_north_colors', [''])[0]) else 'Screw (South)'
+            bridge_south_magnet = 'Screw (South)' if bridge_north_magnet == 'Slug (North)' else 'Slug (North)'
+
+            st.markdown(f"""
+            **Upper Coil:** {bridge_north_magnet}, Phase: {bridge_north_phase}, Resistance: {bridge_north_res} kΩ  
+            **Lower Coil:** {bridge_south_magnet}, Phase: {bridge_south_phase}, Resistance: {bridge_south_res} kΩ  
+            **Total Resistance ({bridge_wiring_choice}):** {round(bridge_total_res, 2) if bridge_total_res else 'N/A'} kΩ
+            """)
+
+            order = _compute_wiring_order(upper_map, lower_map, bridge_wiring_choice, bare_present=bare_present, upper_phase=bridge_north_phase, lower_phase=bridge_south_phase)
+            st.markdown(f"""
+            **Output (HOT):** {', '.join(order.get('output', []))}  
+            **Series link:** {', '.join(order.get('series', [])) if order.get('series') else 'N/A'}  
+            **Ground:** {', '.join(order.get('ground', []))}
+            """)
+
+        except Exception as e:
+            st.error(f"Error computing bridge wiring: {e}")
+
+        # Add inter-pickup connection mode selector
+        st.header('Combined Pickup Configuration')
+        
+        # Let user select connection mode between pickups
+        pickups_connection = st.selectbox(
+            'How should the pickups be connected together?',
+            ['parallel', 'series'],
+            index=0,
+            help='Parallel: Both pickup outputs go to HOT together. Series: One pickup feeds into the other.',
+            key='pickups_connection'
         )
-        bridge_lower_map = infer_start_finish_from_probes(
-            st.session_state.get('bridge_south_colors', []),
-            st.session_state.get('b_lo_probe_red_wire'),
-            st.session_state.get('b_lo_probe_black_wire'),
-            st.session_state.get('b_lo_probe'),
-            st.session_state.get('b_lo_swap', False)
-        )
-        st.write(f"NORTH Start: {bridge_upper_map.get('start')}")
-        st.write(f"NORTH End: {bridge_upper_map.get('finish')}")
-        st.write(f"SOUTH End: {bridge_lower_map.get('finish')}")
-        st.write(f"SOUTH Start: {bridge_lower_map.get('start')}")
-        
-    except Exception:
-        st.write(bridge)
-    render_pickup_preview('bridge', height=240)
 
-    # Show explicit wiring suggestion for the bridge based on analysis result
-    try:
-        bridge_upper_map = infer_start_finish_from_probes(
-            st.session_state.get('bridge_north_colors', []),
-            _none_if_dash(st.session_state.get('b_up_probe_red_wire')),
-            _none_if_dash(st.session_state.get('b_up_probe_black_wire')),
-            st.session_state.get('b_up_probe'),
-            st.session_state.get('b_up_swap', False)
-        )
-        bridge_lower_map = infer_start_finish_from_probes(
-            st.session_state.get('bridge_south_colors', []),
-            _none_if_dash(st.session_state.get('b_lo_probe_red_wire')),
-            _none_if_dash(st.session_state.get('b_lo_probe_black_wire')),
-            st.session_state.get('b_lo_probe'),
-            st.session_state.get('b_lo_swap', False)
-        )
+        # Generate complete wiring JSON
+        try:
+            st.subheader('Complete Wiring JSON')
+            st.markdown('This JSON includes all wiring details for both pickups and their inter-pickup connection.')
 
-        # Bridge: auto-map Start/Finish from probes using same rules as neck
-        b_up_red = _none_if_dash(st.session_state.get('b_up_probe_red_wire'))
-        b_up_black = _none_if_dash(st.session_state.get('b_up_probe_black_wire'))
-        b_north_start, b_north_finish = _map_start_finish_from_probes(
-            b_up_red,
-            b_up_black,
-            st.session_state.get('b_up_probe'),
-            st.session_state.get('b_up_swap', False),
-            bridge_upper_map
-        )
+            # Helper to check for None/'--' placeholder in probe->wire selections
+            def _none_if_dash(val):
+                return None if (val is None or (isinstance(val, str) and val.strip() == '--')) else val
 
-        b_lo_red = _none_if_dash(st.session_state.get('b_lo_probe_red_wire'))
-        b_lo_black = _none_if_dash(st.session_state.get('b_lo_probe_black_wire'))
-        b_south_start, b_south_finish = _map_start_finish_from_probes(
-            b_lo_red,
-            b_lo_black,
-            st.session_state.get('b_lo_probe'),
-            st.session_state.get('b_lo_swap', False),
-            bridge_lower_map
-        )
+            # Recompute mappings for both pickups using the helper that avoids '--' placeholders
+            neck_upper_map = infer_start_finish_from_probes(
+                st.session_state.get('neck_north_colors', []),
+                _none_if_dash(st.session_state.get('n_up_probe_red_wire')),
+                _none_if_dash(st.session_state.get('n_up_probe_black_wire')),
+                st.session_state.get('n_up_probe'),
+                st.session_state.get('n_up_swap', False)
+            )
+            neck_lower_map = infer_start_finish_from_probes(
+                st.session_state.get('neck_south_colors', []),
+                _none_if_dash(st.session_state.get('n_lo_probe_red_wire')),
+                _none_if_dash(st.session_state.get('n_lo_probe_black_wire')),
+                st.session_state.get('n_lo_probe'),
+                st.session_state.get('n_lo_swap', False)
+            )
 
-        # Mapping: North START == HOT, North END == Series, South START == GROUND, South END == SERIES
-        hot = b_north_start or '<unknown>'
-        series_link = [s for s in ([b_north_finish, b_south_finish]) if s]
-        ground = [g for g in ([b_south_start, 'Bare'] if st.session_state.get('bare') else [b_south_start]) if g]
+            upper_map = infer_start_finish_from_probes(
+                st.session_state.get('bridge_north_colors', []),
+                _none_if_dash(st.session_state.get('b_up_probe_red_wire')),
+                _none_if_dash(st.session_state.get('b_up_probe_black_wire')),
+                st.session_state.get('b_up_probe'),
+                st.session_state.get('b_up_swap', False)
+            )
+            lower_map = infer_start_finish_from_probes(
+                st.session_state.get('bridge_south_colors', []),
+                _none_if_dash(st.session_state.get('b_lo_probe_red_wire')),
+                _none_if_dash(st.session_state.get('b_lo_probe_black_wire')),
+                st.session_state.get('b_lo_probe'),
+                st.session_state.get('b_lo_swap', False)
+            )
 
-        st.markdown('**Suggested wiring (Bridge)**')
-        st.write(f"{hot}-HOT -> SWITCH: ")
-        if series_link:
-            st.write(f"- Series link (solder together and insulate): {', '.join(series_link)}")
-        else:
-            st.write('- Series link: <none>')
-        if ground:
-            st.write(f"- Ground (pot back): {', '.join(ground)}")
-        else:
-            st.write('- Ground: <none>')
+            def _probe_is_reverse(choice):
+                if not choice:
+                    return False
+                c = str(choice).lower()
+                return any(k in c for k in ('laskee', 'drop', 'decrease', 'fall', 'reverse', 'käänte'))
 
-        st.markdown('**Bridge — Step-by-step**')
-        st.write('1. Solder the HOT wire to SWITCH.')
-        if series_link:
-            st.write('2. Solder the two series-link wires together (this forms the coil join). Insulate this join with heatshrink or tape unless it is the output.')
-        st.write('3. Tie the ground wires (and bare) to the pot.')
-        st.markdown('---')
-    except Exception:
-        pass
+            neck_north_phase = 'Reverse' if _probe_is_reverse(st.session_state.get('n_up_probe')) else 'Normal'
+            neck_south_phase = 'Reverse' if _probe_is_reverse(st.session_state.get('n_lo_probe')) else 'Normal'
+            bridge_north_phase = 'Reverse' if _probe_is_reverse(st.session_state.get('b_up_probe')) else 'Normal'
+            bridge_south_phase = 'Reverse' if _probe_is_reverse(st.session_state.get('b_lo_probe')) else 'Normal'
 
-    # New UI: Wiring order selector (Series / Parallel / Slug only / Screw only)
-    try:
-        st.subheader('Inferred mapping (preview)')
-        
-        # NECK PICKUP: Get phase information from Step 5
-        neck_north_phase_str = st.session_state.get('n_up_probe', 'Normal Phase')
-        neck_south_phase_str = st.session_state.get('n_lo_probe', 'Normal Phase')
-        neck_north_phase = 'Reverse' if 'Reverse' in neck_north_phase_str else 'Normal'
-        neck_south_phase = 'Reverse' if 'Reverse' in neck_south_phase_str else 'Normal'
-        
-        # RWRP validation: opposite phases
-        neck_phase_opposite = neck_north_phase != neck_south_phase
-        neck_rwrp_status = '✓ RWRP' if neck_phase_opposite else '✗ Not RWRP'
-        neck_rwrp_color = '🟢' if neck_phase_opposite else '🔴'
-        
-        st.markdown(f'**NECK Pickup:** (Coil1: Slug {neck_north_phase} | Coil2: Screw {neck_south_phase}) {neck_rwrp_color} {neck_rwrp_status}')
-        st.write(f"Coil1 Start HOT: {neck_upper_map.get('start')}")
-        st.write(f"Coil1 End SERIES: {neck_upper_map.get('finish')}")
-        st.write(f"Coil2 End SERIES: {neck_lower_map.get('finish')}")
-        st.write(f"Coil2 Start GROUND: {neck_lower_map.get('start')}")
-        
-        st.markdown('---')
-        
-        # BRIDGE PICKUP: Get phase information from Step 5
-        bridge_north_phase_str = st.session_state.get('b_up_probe', 'Normal Phase')
-        bridge_south_phase_str = st.session_state.get('b_lo_probe', 'Normal Phase')
-        bridge_north_phase = 'Reverse' if 'Reverse' in bridge_north_phase_str else 'Normal'
-        bridge_south_phase = 'Reverse' if 'Reverse' in bridge_south_phase_str else 'Normal'
-        
-        # RWRP validation: opposite phases
-        bridge_phase_opposite = bridge_north_phase != bridge_south_phase
-        bridge_rwrp_status = '✓ RWRP' if bridge_phase_opposite else '✗ Not RWRP'
-        bridge_rwrp_color = '🟢' if bridge_phase_opposite else '🔴'
+            neck_north_res = st.session_state.get('n_up')
+            neck_south_res = st.session_state.get('n_lo')
+            bridge_north_res = st.session_state.get('b_up')
+            bridge_south_res = st.session_state.get('b_lo')
 
-        st.markdown(f'**BRIDGE Pickup:** (Coil1: Slug {bridge_north_phase} | Coil2: Screw {bridge_south_phase}) {bridge_rwrp_color} {bridge_rwrp_status}')
-        st.write(f"Coil1 Start HOT: {bridge_upper_map.get('start')}")
-        st.write(f"Coil1 End SERIES: {bridge_upper_map.get('finish')}")
-        st.write(f"Coil2 End SERIES: {bridge_lower_map.get('finish')}")
-        st.write(f"Coil2 Start : {bridge_lower_map.get('start')}")
-        
-        st.markdown('---')
-        
-        # Enhanced wiring selector with multi-pickup options
-        wiring_options = [
-            'NECK - series',
-            'NECK - parallel',
-            'NECK - slug only',
-            'NECK - screw only',
-            'BRIDGE - series',
-            'BRIDGE - parallel',
-            'BRIDGE - slug only',
-            'BRIDGE - screw only',
-            'BOTH - series',
-            'BOTH - parallel',
-            'BOTH - coil split (upper + lower parallel)'
-        ]
-        wiring_selection = st.selectbox('Choose wiring configuration:', wiring_options, index=0)
-        
-        # Parse selection to determine which pickup(s) and wiring type
-        if 'BOTH' in wiring_selection:
-            if 'coil split' in wiring_selection:
-                # Coil split: always uses upper coils if available
-                # NECK pickup determines the configuration
-                # Get NECK upper coil probe result to determine magnet pole
-                neck_upper_probe = st.session_state.get('n_up_probe', 'Normal Phase')
-                neck_upper_is_south = 'Screw' in str(st.session_state.get('neck_north_colors', [''])[0]) if st.session_state.get('neck_north_colors') else False
-                
-                # Determine which wiring type for each pickup
-                # If NECK upper is south magnet, BRIDGE must use north (slug)
-                # If NECK upper is north magnet, BRIDGE must use south (screw)
-                if neck_upper_is_south:
-                    neck_wiring_choice = 'screw_only'  # NECK uses upper (south coil)
-                    bridge_wiring_choice = 'slug_only'  # BRIDGE uses upper (north coil)
-                else:
-                    neck_wiring_choice = 'slug_only'   # NECK uses upper (north coil)
-                    bridge_wiring_choice = 'screw_only' # BRIDGE uses upper (south coil)
-                both_coil_split = True
-                pickups_connection = 'parallel'  # Coil split always uses parallel
-            else:
-                # BOTH series/parallel means: both pickups have coils in SERIES internally,
-                # then the two pickups are wired in series or parallel to each other
-                # So both pickups always use 'series' for their internal wiring
-                neck_wiring_choice = 'series'
-                bridge_wiring_choice = 'series'
-                both_coil_split = False
-                # Extract how the two pickups are connected to each other
-                pickups_connection = wiring_selection.split(' - ')[1].lower()  # 'series' or 'parallel'
-        elif 'NECK' in wiring_selection:
-            wiring_type = wiring_selection.split(' - ')[1].lower().replace(' ', '_')
-            neck_wiring_choice = wiring_type
-            bridge_wiring_choice = 'series'  # default, not used
-            both_coil_split = False
-            pickups_connection = None
-        else:  # BRIDGE
-            wiring_type = wiring_selection.split(' - ')[1].lower().replace(' ', '_')
-            bridge_wiring_choice = wiring_type
-            neck_wiring_choice = 'series'  # default, not used
-            both_coil_split = False
-            pickups_connection = None
-        
-        # Which pickups to show/compute
-        show_neck = 'NECK' in wiring_selection or 'BOTH' in wiring_selection
-        show_bridge = 'BRIDGE' in wiring_selection or 'BOTH' in wiring_selection
-        
-        bare_present = bool(st.session_state.get('bare', False))
+            neck_wiring_choice = st.session_state.get('neck_wiring_choice', 'series')
+            bridge_wiring_choice = st.session_state.get('bridge_wiring_choice', 'series')
 
-        # recompute maps for this pickup (reuse previously-defined helpers)
-        def _none_if_dash(val):
-            return None if (val is None or (isinstance(val, str) and val.strip() == '--')) else val
+            neck_total_res = _calculate_total_resistance(neck_north_res, neck_south_res, neck_wiring_choice)
+            bridge_total_res = _calculate_total_resistance(bridge_north_res, bridge_south_res, bridge_wiring_choice)
 
-        upper_map = infer_start_finish_from_probes(
-            st.session_state.get('bridge_north_colors', []),
-            _none_if_dash(st.session_state.get('b_up_probe_red_wire')),
-            _none_if_dash(st.session_state.get('b_up_probe_black_wire')),
-            st.session_state.get('b_up_probe'),
-            st.session_state.get('b_up_swap', False)
-        )
-        lower_map = infer_start_finish_from_probes(
-            st.session_state.get('bridge_south_colors', []),
-            _none_if_dash(st.session_state.get('b_lo_probe_red_wire')),
-            _none_if_dash(st.session_state.get('b_lo_probe_black_wire')),
-            st.session_state.get('b_lo_probe'),
-            st.session_state.get('b_lo_swap', False)
-        )
-        
-        # Get phase information from Step 5 probe selections for both pickups
-        # BRIDGE
-        bridge_north_phase_str = st.session_state.get('b_up_probe', 'Normal Phase')
-        bridge_south_phase_str = st.session_state.get('b_lo_probe', 'Normal Phase')
-        bridge_north_phase = 'Reverse' if 'Reverse' in bridge_north_phase_str else 'Normal'
-        bridge_south_phase = 'Reverse' if 'Reverse' in bridge_south_phase_str else 'Normal'
-        
-        # NECK
-        neck_north_phase_str = st.session_state.get('n_up_probe', 'Normal Phase')
-        neck_south_phase_str = st.session_state.get('n_lo_probe', 'Normal Phase')
-        neck_north_phase = 'Reverse' if 'Reverse' in neck_north_phase_str else 'Normal'
-        neck_south_phase = 'Reverse' if 'Reverse' in neck_south_phase_str else 'Normal'
+            bare_present = st.session_state.get('bare', False)
 
-        if st.button('Compute wiring order'):
-            try:
-                # Compute for requested pickup(s)
-                if show_bridge:
-                    order = _compute_wiring_order(upper_map, lower_map, bridge_wiring_choice, bare_present=bare_present, upper_phase=bridge_north_phase, lower_phase=bridge_south_phase)
-                    st.markdown(f"**BRIDGE - Wiring variant:** {bridge_wiring_choice.replace('_', ' ').title()}")
-                    if 'series' in order:
-                        st.write(f"Hot (to switch): {', '.join(order.get('output', [])) or '<unknown>'}")
-                        st.write(f"Series link (join together): {', '.join(order.get('series', [])) or '<none>'}")
-                        st.write(f"Grounds: {', '.join(order.get('ground', [])) or '<unknown>'}")
-                    else:
-                        st.write(f"Output wires (to output/switch): {', '.join(order.get('output', [])) or '<unknown>'}")
-                        st.write(f"Ground wires: {', '.join(order.get('ground', [])) or '<unknown>'}")
-                    if order.get('notes'):
-                        st.info(order.get('notes'))
-                
-                if show_neck:
-                    neck_order = _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase)
-                    st.markdown(f"**NECK - Wiring variant:** {neck_wiring_choice.replace('_', ' ').title()}")
-                    if 'series' in neck_order:
-                        st.write(f"Hot (to switch): {', '.join(neck_order.get('output', [])) or '<unknown>'}")
-                        st.write(f"Series link (join together): {', '.join(neck_order.get('series', [])) or '<none>'}")
-                        st.write(f"Grounds: {', '.join(neck_order.get('ground', [])) or '<unknown>'}")
-                    else:
-                        st.write(f"Output wires (to output/switch): {', '.join(neck_order.get('output', [])) or '<unknown>'}")
-                        st.write(f"Ground wires: {', '.join(neck_order.get('ground', [])) or '<unknown>'}")
-                    if neck_order.get('notes'):
-                        st.info(neck_order.get('notes'))
+            neck_order = _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase)
 
-                # Display wiring configuration as JSON for AI context
-                st.markdown('**Wiring configuration (JSON format for AI assistance):**')
-                
-                # Get neck pickup wiring (same logic as bridge but with neck session keys)
-                neck_upper_map = infer_start_finish_from_probes(
-                    st.session_state.get('neck_north_colors', []),
-                    _none_if_dash(st.session_state.get('n_up_probe_red_wire')),
-                    _none_if_dash(st.session_state.get('n_up_probe_black_wire')),
-                    st.session_state.get('n_up_probe'),
-                    st.session_state.get('n_up_swap', False)
-                )
-                neck_lower_map = infer_start_finish_from_probes(
-                    st.session_state.get('neck_south_colors', []),
-                    _none_if_dash(st.session_state.get('n_lo_probe_red_wire')),
-                    _none_if_dash(st.session_state.get('n_lo_probe_black_wire')),
-                    st.session_state.get('n_lo_probe'),
-                    st.session_state.get('n_lo_swap', False)
-                )
-                
-                # Recompute orders for correct wiring types
-                if show_bridge:
-                    order = _compute_wiring_order(upper_map, lower_map, bridge_wiring_choice, bare_present=bare_present, upper_phase=bridge_north_phase, lower_phase=bridge_south_phase)
-                else:
-                    order = {}
-                
-                if show_neck:
-                    neck_order = _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase)
-                else:
-                    neck_order = {}
-                
-                # Calculate resistances for both pickups
-                neck_north_res = st.session_state.get('n_up')
-                neck_south_res = st.session_state.get('n_lo')
-                neck_total_res = _calculate_total_resistance(neck_north_res, neck_south_res, neck_wiring_choice)
-                
-                bridge_north_res = st.session_state.get('b_up')
-                bridge_south_res = st.session_state.get('b_lo')
-                bridge_total_res = _calculate_total_resistance(bridge_north_res, bridge_south_res, bridge_wiring_choice)
-                
-                # Build JSON with selected pickups
-                pickups_list = []
-                
-                if show_neck:
-                    # For coil split: NECK uses upper coil only
-                    if both_coil_split:
-                        # Coil split mode: determine which magnet pole is upper for NECK
-                        neck_upper_is_south = 'Screw' in str(st.session_state.get('neck_north_colors', [''])[0]) if st.session_state.get('neck_north_colors') else False
-                        
-                        if neck_upper_is_south:
-                            # NECK upper is south magnet (screw coil)
-                            coil_name = 'Upper/Screw (South)'
-                            coil_map = neck_lower_map
-                            coil_res = neck_south_res
-                            coil_phase = neck_south_phase
-                        else:
-                            # NECK upper is north magnet (slug coil)
-                            coil_name = 'Upper/Slug (North)'
-                            coil_map = neck_upper_map
-                            coil_res = neck_north_res
-                            coil_phase = neck_north_phase
-                        
-                        pickups_list.append({
-                            'pickup': 'NECK (coil split - upper coil)',
-                            'variant': neck_wiring_choice,
-                            'coils': {
-                                'coil_upper': {
-                                    'name': f'Coil: {coil_name}',
-                                    'start': coil_map.get('start'),
-                                    'finish': coil_map.get('finish'),
-                                    'phase': coil_phase,
-                                    'resistance_kohm': coil_res
-                                }
-                            },
-                            'wiring_configuration': {
-                                'output': _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase).get('output', []),
-                                'series': [],
-                                'ground': _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase).get('ground', []),
-                                'bare_present': bare_present,
-                                'parallel_with': 'BRIDGE (upper coil)',
-                                'total_resistance_kohm': round(coil_res, 2) if coil_res else None
-                            }
-                        })
-                    else:
-                        # Normal mode: NECK with selected wiring type
-                        neck_order = _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase)
-                        pickups_list.append({
-                            'pickup': 'NECK',
-                            'variant': neck_wiring_choice,
-                            'coils': {
-                                'coil1_slug_north': {
-                                    'name': 'Coil 1: Slug (North/Upper)',
-                                    'start': neck_upper_map.get('start'),
-                                    'finish': neck_upper_map.get('finish'),
-                                    'phase': neck_north_phase,
-                                    'resistance_kohm': neck_north_res
-                                },
-                                'coil2_screw_south': {
-                                    'name': 'Coil 2: Screw (South/Lower)',
-                                    'start': neck_lower_map.get('start'),
-                                    'finish': neck_lower_map.get('finish'),
-                                    'phase': neck_south_phase,
-                                    'resistance_kohm': neck_south_res
-                                }
-                            },
-                            'wiring_configuration': {
-                                'output': neck_order.get('output', []),
-                                'series': neck_order.get('series', []),
-                                'ground': neck_order.get('ground', []),
-                                'bare_present': bare_present,
-                                'rwrp': 'Yes' if neck_north_phase != neck_south_phase else 'No',
-                                'total_resistance_kohm': round(neck_total_res, 2) if neck_total_res else None
-                            }
-                        })
-                
-                if show_bridge:
-                    # For coil split: BRIDGE uses upper coil only (opposite magnet pole from NECK)
-                    if both_coil_split:
-                        # Coil split mode: determine which magnet pole is upper for BRIDGE
-                        # BRIDGE uses opposite pole from NECK
-                        neck_upper_is_south = 'Screw' in str(st.session_state.get('neck_north_colors', [''])[0]) if st.session_state.get('neck_north_colors') else False
-                        
-                        if neck_upper_is_south:
-                            # NECK upper is south, so BRIDGE upper must be north (slug coil)
-                            coil_name = 'Upper/Slug (North)'
-                            coil_map = upper_map
-                            coil_res = bridge_north_res
-                            coil_phase = bridge_north_phase
-                        else:
-                            # NECK upper is north, so BRIDGE upper must be south (screw coil)
-                            coil_name = 'Upper/Screw (South)'
-                            coil_map = lower_map
-                            coil_res = bridge_south_res
-                            coil_phase = bridge_south_phase
-                        
-                        bridge_order = _compute_wiring_order(upper_map, lower_map, bridge_wiring_choice, bare_present=bare_present, upper_phase=bridge_north_phase, lower_phase=bridge_south_phase)
-                        pickups_list.append({
-                            'pickup': 'BRIDGE (coil split - upper coil)',
-                            'variant': bridge_wiring_choice,
-                            'coils': {
-                                'coil_upper': {
-                                    'name': f'Coil: {coil_name}',
-                                    'start': coil_map.get('start'),
-                                    'finish': coil_map.get('finish'),
-                                    'phase': coil_phase,
-                                    'resistance_kohm': coil_res
-                                }
-                            },
-                            'wiring_configuration': {
-                                'output': bridge_order.get('output', []),
-                                'series': [],
-                                'ground': bridge_order.get('ground', []),
-                                'bare_present': bare_present,
-                                'parallel_with': 'NECK (upper coil)',
-                                'total_resistance_kohm': round(coil_res, 2) if coil_res else None
-                            }
-                        })
-                    else:
-                        # Normal mode: BRIDGE with selected wiring type
-                        order = _compute_wiring_order(upper_map, lower_map, bridge_wiring_choice, bare_present=bare_present, upper_phase=bridge_north_phase, lower_phase=bridge_south_phase)
-                        pickups_list.append({
-                            'pickup': 'BRIDGE',
-                            'variant': bridge_wiring_choice,
-                            'coils': {
-                                'coil1_slug_north': {
-                                    'name': 'Coil 1: Slug (North/Upper)',
-                                    'start': upper_map.get('start'),
-                                    'finish': upper_map.get('finish'),
-                                    'phase': bridge_north_phase,
-                                    'resistance_kohm': bridge_north_res
-                                },
-                                'coil2_screw_south': {
-                                    'name': 'Coil 2: Screw (South/Lower)',
-                                    'start': lower_map.get('start'),
-                                    'finish': lower_map.get('finish'),
-                                    'phase': bridge_south_phase,
-                                    'resistance_kohm': bridge_south_res
-                                }
-                            },
-                            'wiring_configuration': {
-                                'output': order.get('output', []),
-                                'series': order.get('series', []),
-                                'ground': order.get('ground', []),
-                                'bare_present': bare_present,
-                                'rwrp': 'Yes' if bridge_north_phase != bridge_south_phase else 'No',
-                                'total_resistance_kohm': round(bridge_total_res, 2) if bridge_total_res else None
-                            }
-                        })
-                
-                # Calculate combined total resistance when both pickups are present
-                # Use series or parallel formula depending on how pickups are connected
-                combined_total_res = None
-                combined_wiring = None
-                if show_neck and show_bridge:
-                    if neck_total_res and bridge_total_res:
-                        neck_res = float(neck_total_res)
-                        bridge_res = float(bridge_total_res)
-                        if neck_res > 0 and bridge_res > 0:
-                            if pickups_connection == 'series':
-                                # Series: resistances add
-                                combined_total_res = neck_res + bridge_res
-                            else:
-                                # Parallel: use parallel formula
-                                combined_total_res = (neck_res * bridge_res) / (neck_res + bridge_res)
+            # Build pickup list for JSON output
+            pickups_list = []
 
-                    # Add high-level inter-pickup wiring guidance for BOTH modes (non coil-split)
-                    if pickups_connection in ('series', 'parallel') and not both_coil_split:
-                        neck_hot = neck_order.get('output', []) if neck_order else []
-                        bridge_hot = order.get('output', []) if order else []
-                        neck_ground_raw = neck_order.get('ground', []) if neck_order else []
-                        bridge_ground_raw = order.get('ground', []) if order else []
+            # Check if coil split mode is active (both pickups forced to only upper coil)
+            both_coil_split = (neck_wiring_choice in ('slug_only', 'screw_only') and bridge_wiring_choice in ('slug_only', 'screw_only'))
 
-                        # Keep Bare on the ground bus, but avoid mixing it into the inter-pickup link
-                        def _split_ground(gs: list):
-                            main = [g for g in gs if g and g != 'Bare']
-                            has_bare = any(g == 'Bare' for g in gs)
-                            return main, has_bare
-
-                        neck_ground, neck_has_bare = _split_ground(neck_ground_raw)
-                        bridge_ground, bridge_has_bare = _split_ground(bridge_ground_raw)
-
-                        if pickups_connection == 'series':
-                            # Series between pickups: neck ground -> bridge hot; bridge ground to overall ground
-                            combined_wiring = {
-                                'mode': 'series',
-                                'steps': {
-                                    'hot_to_output': neck_hot,
-                                    'link_neck_ground_to_bridge_hot': neck_ground + bridge_hot,
-                                    'ground': bridge_ground + (['Bare'] if (neck_has_bare or bridge_has_bare) else [])
-                                }
-                                # Include internal series links for clarity when pickups are forced to series
-                                if neck_order.get('series') or order.get('series') else None
-                            }
-                        else:
-                            # Parallel between pickups: both hots together, both grounds together
-                            ground_bus = neck_ground + bridge_ground
-                            if neck_has_bare or bridge_has_bare:
-                                ground_bus.append('Bare')
-                            combined_wiring = {
-                                'mode': 'parallel',
-                                'steps': {
-                                    'starts_to_hot': neck_hot + bridge_hot,
-                                    'ends_to_ground': ground_bus,
-                                    'note': 'Parallel rule: north start + south start -> HOT; north end + south end -> GND (each pickup already series internally)',
-                                    'pickup_internal_series_links': {
-                                        'neck_series_link': neck_order.get('series', []),
-                                        'bridge_series_link': order.get('series', [])
-                                    }
-                                }
-                            }
-                
-                wiring_json = {
-                    'pickups': pickups_list,
-                    'coil_split_mode': both_coil_split,
-                    'combined_total_resistance_kohm': round(combined_total_res, 2) if combined_total_res else None,
-                    'combined_wiring': combined_wiring
-                }
-                
-                # Add coil split description only when in coil split mode
+            # Add NECK pickup to the list
+            show_neck = True  # Always show neck for now (could be conditional based on switch position)
+            if show_neck:
                 if both_coil_split:
-                    wiring_json['coil_split_description'] = 'NECK upper coil + BRIDGE upper coil in parallel (opposite poles)'
-                
-                # Display as formatted JSON string for better copy-paste
-                json_str = json.dumps(wiring_json, indent=2)
-                st.code(json_str, language='json')
-                st.markdown('**Ask AI:** Copy this JSON and ask: "Are these humbuckers correctly configured for hum cancelling? Are all coils RWRP (reverse wound + reverse polarity)?"')
-            except Exception as e:
-                st.error(f"Error computing wiring order: {e}")
+                    # Coil split mode: determine which magnet pole is upper for NECK
+                    neck_upper_is_south = 'Screw' in str(st.session_state.get('neck_north_colors', [''])[0]) if st.session_state.get('neck_north_colors') else False
+                    
+                    if neck_upper_is_south:
+                        # Upper coil is south (screw), so use lower coil
+                        coil_name = 'Upper/Screw (South)'
+                        coil_map = neck_lower_map
+                        coil_res = neck_south_res
+                        coil_phase = neck_south_phase
+                    else:
+                        # Upper coil is north (slug), so use upper coil
+                        coil_name = 'Upper/Slug (North)'
+                        coil_map = neck_upper_map
+                        coil_res = neck_north_res
+                        coil_phase = neck_north_phase
+                    
+                    neck_order = _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase)
+                    pickups_list.append({
+                        'pickup': 'NECK (coil split - upper coil)',
+                        'variant': neck_wiring_choice,
+                        'coils': {
+                            'coil_upper': {
+                                'name': f'Coil: {coil_name}',
+                                'start': coil_map.get('start'),
+                                'finish': coil_map.get('finish'),
+                                'phase': coil_phase,
+                                'resistance_kohm': coil_res
+                            }
+                        },
+                        'wiring_configuration': {
+                            'output': neck_order.get('output', []),
+                            'series': [],
+                            'ground': neck_order.get('ground', []),
+                            'bare_present': bare_present,
+                            'total_resistance_kohm': round(coil_res, 2) if coil_res else None
+                        }
+                    })
+                else:
+                    # Normal mode: NECK with selected wiring type
+                    pickups_list.append({
+                        'pickup': 'NECK',
+                        'variant': neck_wiring_choice,
+                        'coils': {
+                            'coil1_slug_north': {
+                                'name': 'Coil 1: Slug (North/Upper)',
+                                'start': neck_upper_map.get('start'),
+                                'finish': neck_upper_map.get('finish'),
+                                'phase': neck_north_phase,
+                                'resistance_kohm': neck_north_res
+                            },
+                            'coil2_screw_south': {
+                                'name': 'Coil 2: Screw (South/Lower)',
+                                'start': neck_lower_map.get('start'),
+                                'finish': neck_lower_map.get('finish'),
+                                'phase': neck_south_phase,
+                                'resistance_kohm': neck_south_res
+                            }
+                        },
+                        'wiring_configuration': {
+                            'output': neck_order.get('output', []),
+                            'series': neck_order.get('series', []),
+                            'ground': neck_order.get('ground', []),
+                            'bare_present': bare_present,
+                            'rwrp': 'Yes' if neck_north_phase != neck_south_phase else 'No',
+                            'total_resistance_kohm': round(neck_total_res, 2) if neck_total_res else None
+                        }
+                    })
+
+            # Add BRIDGE pickup to the list
+            show_bridge = True  # Always show bridge for now
+            if show_bridge:
+                if both_coil_split:
+                    # Coil split mode: determine which magnet pole is upper for BRIDGE
+                    # BRIDGE uses opposite pole from NECK
+                    neck_upper_is_south = 'Screw' in str(st.session_state.get('neck_north_colors', [''])[0]) if st.session_state.get('neck_north_colors') else False
+                    
+                    if neck_upper_is_south:
+                        # NECK upper is south, so BRIDGE upper must be north (slug coil)
+                        coil_name = 'Upper/Slug (North)'
+                        coil_map = upper_map
+                        coil_res = bridge_north_res
+                        coil_phase = bridge_north_phase
+                    else:
+                        # NECK upper is north, so BRIDGE upper must be south (screw coil)
+                        coil_name = 'Upper/Screw (South)'
+                        coil_map = lower_map
+                        coil_res = bridge_south_res
+                        coil_phase = bridge_south_phase
+                    
+                    bridge_order = _compute_wiring_order(upper_map, lower_map, bridge_wiring_choice, bare_present=bare_present, upper_phase=bridge_north_phase, lower_phase=bridge_south_phase)
+                    pickups_list.append({
+                        'pickup': 'BRIDGE (coil split - upper coil)',
+                        'variant': bridge_wiring_choice,
+                        'coils': {
+                            'coil_upper': {
+                                'name': f'Coil: {coil_name}',
+                                'start': coil_map.get('start'),
+                                'finish': coil_map.get('finish'),
+                                'phase': coil_phase,
+                                'resistance_kohm': coil_res
+                            }
+                        },
+                        'wiring_configuration': {
+                            'output': bridge_order.get('output', []),
+                            'series': [],
+                            'ground': bridge_order.get('ground', []),
+                            'bare_present': bare_present,
+                            'parallel_with': 'NECK (upper coil)',
+                            'total_resistance_kohm': round(coil_res, 2) if coil_res else None
+                        }
+                    })
+                else:
+                    # Normal mode: BRIDGE with selected wiring type
+                    order = _compute_wiring_order(upper_map, lower_map, bridge_wiring_choice, bare_present=bare_present, upper_phase=bridge_north_phase, lower_phase=bridge_south_phase)
+                    pickups_list.append({
+                        'pickup': 'BRIDGE',
+                        'variant': bridge_wiring_choice,
+                        'coils': {
+                            'coil1_slug_north': {
+                                'name': 'Coil 1: Slug (North/Upper)',
+                                'start': upper_map.get('start'),
+                                'finish': upper_map.get('finish'),
+                                'phase': bridge_north_phase,
+                                'resistance_kohm': bridge_north_res
+                            },
+                            'coil2_screw_south': {
+                                'name': 'Coil 2: Screw (South/Lower)',
+                                'start': lower_map.get('start'),
+                                'finish': lower_map.get('finish'),
+                                'phase': bridge_south_phase,
+                                'resistance_kohm': bridge_south_res
+                            }
+                        },
+                        'wiring_configuration': {
+                            'output': order.get('output', []),
+                            'series': order.get('series', []),
+                            'ground': order.get('ground', []),
+                            'bare_present': bare_present,
+                            'rwrp': 'Yes' if bridge_north_phase != bridge_south_phase else 'No',
+                            'total_resistance_kohm': round(bridge_total_res, 2) if bridge_total_res else None
+                        }
+                    })
+            
+            # Calculate combined total resistance when both pickups are present
+            # Use series or parallel formula depending on how pickups are connected
+            combined_total_res = None
+            combined_wiring = None
+            if show_neck and show_bridge:
+                if neck_total_res and bridge_total_res:
+                    neck_res = float(neck_total_res)
+                    bridge_res = float(bridge_total_res)
+                    if neck_res > 0 and bridge_res > 0:
+                        if pickups_connection == 'series':
+                            # Series: resistances add
+                            combined_total_res = neck_res + bridge_res
+                        else:
+                            # Parallel: use parallel formula
+                            combined_total_res = (neck_res * bridge_res) / (neck_res + bridge_res)
+
+                # Add high-level inter-pickup wiring guidance for BOTH modes (non coil-split)
+                if pickups_connection in ('series', 'parallel') and not both_coil_split:
+                    neck_hot = neck_order.get('output', []) if neck_order else []
+                    bridge_hot = order.get('output', []) if order else []
+                    neck_ground_raw = neck_order.get('ground', []) if neck_order else []
+                    bridge_ground_raw = order.get('ground', []) if order else []
+
+                    # Keep Bare on the ground bus, but avoid mixing it into the inter-pickup link
+                    def _split_ground(gs: list):
+                        main = [g for g in gs if g and g != 'Bare']
+                        has_bare = any(g == 'Bare' for g in gs)
+                        return main, has_bare
+
+                    neck_ground, neck_has_bare = _split_ground(neck_ground_raw)
+                    bridge_ground, bridge_has_bare = _split_ground(bridge_ground_raw)
+
+                    if pickups_connection == 'series':
+                        # Series between pickups: neck ground -> bridge hot; bridge ground to overall ground
+                        combined_wiring = {
+                            'mode': 'series',
+                            'steps': {
+                                'hot_to_output': neck_hot,
+                                'link_neck_ground_to_bridge_hot': neck_ground + bridge_hot,
+                                'ground': bridge_ground + (['Bare'] if (neck_has_bare or bridge_has_bare) else [])
+                            }
+                            # Include internal series links for clarity when pickups are forced to series
+                            if neck_order.get('series') or order.get('series') else None
+                        }
+                    else:
+                        # Parallel between pickups: both hots together, both grounds together
+                        ground_bus = neck_ground + bridge_ground
+                        if neck_has_bare or bridge_has_bare:
+                            ground_bus.append('Bare')
+                        combined_wiring = {
+                            'mode': 'parallel',
+                            'steps': {
+                                'starts_to_hot': neck_hot + bridge_hot,
+                                'ends_to_ground': ground_bus,
+                                'note': 'Parallel rule: north start + south start -> HOT; north end + south end -> GND (each pickup already series internally)',
+                                'pickup_internal_series_links': {
+                                    'neck_series_link': neck_order.get('series', []),
+                                    'bridge_series_link': order.get('series', [])
+                                }
+                            }
+                        }
+            
+            wiring_json = {
+                'pickups': pickups_list,
+                'coil_split_mode': both_coil_split,
+                'combined_total_resistance_kohm': round(combined_total_res, 2) if combined_total_res else None,
+                'combined_wiring': combined_wiring
+            }
+            
+            # Add coil split description only when in coil split mode
+            if both_coil_split:
+                wiring_json['coil_split_description'] = 'NECK upper coil + BRIDGE upper coil in parallel (opposite poles)'
+            
+            # Display as formatted JSON string for better copy-paste
+            json_str = json.dumps(wiring_json, indent=2)
+            st.code(json_str, language='json')
+            st.markdown('**Ask AI:** Copy this JSON and ask: "Are these humbuckers correctly configured for hum cancelling? Are all coils RWRP (reverse wound + reverse polarity)?"')
+        except Exception as e:
+            st.error(f"Error computing wiring order: {e}")
+
+
+# Quick-rule: apply North-reverse assumption
+def _apply_north_reverse_rule():
+    # mark north (top) coil as reverse and south (bottom) as normal
+    st.session_state['north_reverse_phased'] = True
+    # set probe radio answers: North reversed, South normal
+    # These strings match the options used in the radio widgets
+    st.session_state['n_up_probe'] = 'Laskee (käänteinen)'
+    st.session_state['n_lo_probe'] = 'Nousee (normaali)'
+    # ensure swap flags are off by default (user can adjust)
+    st.session_state['n_up_swap'] = False
+    st.session_state['n_lo_swap'] = False
+
+    # recompute analysis using existing color selections and probe->wire choices
+    def _none_if_dash(val):
+        return None if (val is None or (isinstance(val, str) and val.strip() == '--')) else val
+
+    neck_pair = st.session_state.get('neck_north_colors', [])
+    south_pair = st.session_state.get('neck_south_colors', [])
+    bridge_north = st.session_state.get('bridge_north_colors', [])
+    bridge_south = st.session_state.get('bridge_south_colors', [])
+
+    analysis_neck = analyze_pickup(
+        neck_pair,
+        south_pair,
+        st.session_state.get('n_up_probe'),
+        st.session_state.get('n_lo_probe'),
+        north_swap=st.session_state.get('n_up_swap'),
+        south_swap=st.session_state.get('n_lo_swap'),
+        bare=st.session_state.get('bare'),
+        north_res_kohm=st.session_state.get('n_up'),
+        south_res_kohm=st.session_state.get('n_lo'),
+        north_red_wire=_none_if_dash(st.session_state.get('n_up_probe_red_wire')),
+        north_black_wire=_none_if_dash(st.session_state.get('n_up_probe_black_wire')),
+        south_red_wire=_none_if_dash(st.session_state.get('n_lo_probe_red_wire')),
+        south_black_wire=_none_if_dash(st.session_state.get('n_lo_probe_black_wire')),
+    )
+
+    analysis_bridge = analyze_pickup(
+        bridge_north,
+        bridge_south,
+        st.session_state.get('b_up_probe'),
+        st.session_state.get('b_lo_probe'),
+        north_swap=st.session_state.get('b_up_swap'),
+        south_swap=st.session_state.get('b_lo_swap'),
+        bare=st.session_state.get('bare'),
+        north_res_kohm=st.session_state.get('b_up'),
+        south_res_kohm=st.session_state.get('b_lo'),
+        north_red_wire=_none_if_dash(st.session_state.get('b_up_probe_red_wire')),
+        north_black_wire=_none_if_dash(st.session_state.get('b_up_probe_black_wire')),
+        south_red_wire=_none_if_dash(st.session_state.get('b_lo_probe_red_wire')),
+        south_black_wire=_none_if_dash(st.session_state.get('b_lo_probe_black_wire')),
+    )
+
+    st.session_state['analysis'] = {'neck': analysis_neck, 'bridge': analysis_bridge}
+    _save_state()
+    # stay on the same step but show a short success message
+    st.success('Applied North-reverse rule and recomputed analysis.')
+
+
+# Restart button (outside all expanders)
+st.markdown('---')
+st.caption('💥 **Made a mistake?** We all do. Even Jimi Hendrix probably mis-wired a pickup once (citation needed).')
+if st.button('Restart'):
+    # Remove saved backup as well
+    try:
+        if os.path.exists(BACKUP_PATH):
+            os.remove(BACKUP_PATH)
     except Exception:
         pass
-
-    # Wiring order helper moved earlier in the file to ensure it's defined before use.
-
-    if st.button('Restart'):
-        # Remove saved backup as well
-        try:
-            if os.path.exists(BACKUP_PATH):
-                os.remove(BACKUP_PATH)
-        except Exception:
-            pass
-        for k in list(st.session_state.keys()):
-            del st.session_state[k]
-        _safe_rerun()
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
+    _safe_rerun()
 
 # Persist current state on each run so changes are saved automatically
 try:
