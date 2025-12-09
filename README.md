@@ -8,7 +8,8 @@ An interactive web application for analyzing and visualizing humbucker pickup wi
 - **Visual Diagrams**: Generate SVG diagrams showing coil orientations and wire connections
 - **AI Assistant**: Get guidance on pickup installation using local Ollama LLM
 - **Manufacturer Presets**: Pre-configured color schemes for major pickup manufacturers
-- **Session Persistence**: Save and restore your work automatically
+- **Modular Architecture**: Step-based workflow for intuitive user experience
+- **Reliable State Management**: Persistent user inputs without constant page refreshes
 
 ## Prerequisites
 
@@ -75,10 +76,16 @@ GuitarWiring/
 │   ├── main.py              # Main Streamlit application
 │   ├── wiring.py            # Pickup wiring logic and SVG generation
 │   ├── humbucker.py         # Humbucker visualization
+│   ├── logic.py             # Analysis and calculation logic
 │   ├── llm_client.py        # Ollama client for AI features
+│   ├── steps/               # Modular step components
+│   │   ├── step_measurements.py
+│   │   ├── step_wiring_mode.py
+│   │   ├── step_pole_assignment.py
+│   │   ├── step_switch_config.py
+│   │   ├── step_soldering_instructions.py
+│   │   └── step_summary.py
 │   └── requirements.txt     # Python dependencies
-├── tests/
-│   └── smoke_test.py        # Basic tests
 ├── start_web.py             # Application launcher
 └── README.md
 ```
