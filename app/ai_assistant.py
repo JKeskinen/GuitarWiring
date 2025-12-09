@@ -16,6 +16,20 @@ class AIAssistant:
         self.ollama_url = os.environ.get('OLLAMA_URL', 'http://127.0.0.1:11434').rstrip('/')
         self.model = os.environ.get('OLLAMA_MODEL', 'mistral:7b')
         
+        # Step guidance prompts
+        self.step_guides = {
+            1: "Step 1 - Wiring Mode: Choose how you want to wire your humbuckers (series, parallel, or coil-split). Series gives you fuller tone, parallel is brighter, and coil-split gives single-coil sound. What would you like to know?",
+            2: "Step 2 - Measurements: Now measure your pickup wire colors and coil resistance. Use a multimeter to identify which wires connect to each coil. Touch the probes to different wire pairs and record the resistance. Need help with multimeter setup?",
+            3: "Step 3 - Switch Configuration: Configure your toggle switch positions. This determines which pickup(s) are active in each switch position. Common setup: neck (rhythm), both (middle), bridge (lead). Questions about switch wiring?",
+            4: "Step 4 - Pole Assignment: Assign which coil is 'North' (closer to neck) and which is 'South' (closer to bridge). This affects phase and hum-canceling. Need help understanding coil orientation?",
+            5: "Step 5 - Soldering Instructions: Time to solder! Follow the wiring diagram carefully. Remember: clean iron tip, heat the joint (not the solder), apply solder to the heated joint. Want soldering tips or troubleshooting?",
+            6: "Step 6 - Summary: Review your complete wiring configuration. Check all connections match the diagram. Test continuity with multimeter before installing. Ready to test or need clarification?"
+        }
+    
+    def get_step_guidance(self, step: int) -> str:
+        """Get automatic guidance for the current step."""
+        return self.step_guides.get(step, "Let me know if you need any help with this step!")
+    
     def stream_response(self, prompt: str, timeout: float = 30.0) -> Generator[str, None, None]:
         """Stream AI response word by word using Ollama API."""
         url = f"{self.ollama_url}/api/generate"
@@ -106,6 +120,10 @@ def init_ai_session_state():
         st.session_state['ai_response'] = ""
     if 'ai_streaming' not in st.session_state:
         st.session_state['ai_streaming'] = False
+    if 'previous_step' not in st.session_state:
+        st.session_state['previous_step'] = 0
+    if 'show_step_guidance' not in st.session_state:
+        st.session_state['show_step_guidance'] = True
 
 
 def render_ai_sidebar():
@@ -115,6 +133,30 @@ def render_ai_sidebar():
     
     st.sidebar.markdown("---")
     st.sidebar.markdown("## 🤖 AI Assistant")
+    
+    # Get current step for automatic guidance
+    current_step = st.session_state.get('step', 1)
+    previous_step = st.session_state.get('previous_step', 0)
+    
+    # Auto-guide when step changes
+    if current_step != previous_step:
+        st.session_state['previous_step'] = current_step
+        st.session_state['show_step_guidance'] = True
+    
+    # Show automatic step guidance
+    if st.session_state.get('show_step_guidance', True):
+        guidance = assistant.get_step_guidance(current_step)
+        st.sidebar.info(f"📖 **Step Guide**\n\n{guidance}")
+        
+        col1, col2 = st.sidebar.columns(2)
+        if col1.button("✅ Got it!", key="dismiss_guidance"):
+            st.session_state['show_step_guidance'] = False
+            st.rerun()
+        if col2.button("🤔 Tell me more", key="more_guidance"):
+            more_prompt = f"I'm on step {current_step}. Can you explain in more detail what I need to do and provide specific tips?"
+            st.session_state['ai_question'] = more_prompt
+            st.session_state['show_step_guidance'] = False
+            st.rerun()
     
     # Chat history section
     with st.sidebar.expander("💬 Chat History", expanded=False):
@@ -148,7 +190,6 @@ def render_ai_sidebar():
     )
     
     # Get context from current step
-    current_step = st.session_state.get('step', 1)
     neck_colors = st.session_state.get('neck_north_colors', [])
     bridge_colors = st.session_state.get('bridge_north_colors', [])
     wiring_mode = st.session_state.get('wiring_mode', None)
