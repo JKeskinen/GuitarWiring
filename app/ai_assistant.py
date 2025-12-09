@@ -18,12 +18,12 @@ class AIAssistant:
         
         # Step guidance prompts
         self.step_guides = {
-            1: "Step 1 - Wiring Mode: Choose how you want to wire your humbuckers (series, parallel, or coil-split). Series gives you fuller tone, parallel is brighter, and coil-split gives single-coil sound. What would you like to know?",
-            2: "Step 2 - Measurements: Now measure your pickup wire colors and coil resistance. Use a multimeter to identify which wires connect to each coil. Touch the probes to different wire pairs and record the resistance. Need help with multimeter setup?",
+            1: "Step 1 - Wiring Mode: Choose how you want to wire your humbuckers (series, parallel, or coil-split). Series gives you fuller tone with both coils, parallel is brighter, and coil-split gives single-coil sound. What would you like to know?",
+            2: "Step 2 - Measurements: Identify your pickup wire colors for each coil. Use a multimeter to measure resistance between wire pairs to find which wires belong to which coil. Don't solder anything yet - we're just identifying wires! Need help with the multimeter?",
             3: "Step 3 - Switch Configuration: Configure your toggle switch positions. This determines which pickup(s) are active in each switch position. Common setup: neck (rhythm), both (middle), bridge (lead). Questions about switch wiring?",
-            4: "Step 4 - Pole Assignment: Assign which coil is 'North' (closer to neck) and which is 'South' (closer to bridge). This affects phase and hum-canceling. Need help understanding coil orientation?",
-            5: "Step 5 - Soldering Instructions: Time to solder! Follow the wiring diagram carefully. Remember: clean iron tip, heat the joint (not the solder), apply solder to the heated joint. Want soldering tips or troubleshooting?",
-            6: "Step 6 - Summary: Review your complete wiring configuration. Check all connections match the diagram. Test continuity with multimeter before installing. Ready to test or need clarification?"
+            4: "Step 4 - Pole Assignment & Phase Testing: Assign which coil is 'North' (screw side) and which is 'South' (slug side). Use probes to test which wire touched increases resistance - this determines START and FINISH wires. Phase testing is critical for hum-canceling! Need help understanding polarity?",
+            5: "Step 5 - Soldering Instructions: Now it's time to solder! Follow the wiring diagram carefully based on the phase and polarity you discovered. Remember: clean iron tip, heat the joint (not the solder), apply solder to the heated joint, let cool without moving. Want soldering tips?",
+            6: "Step 6 - Summary & Verification: Review your complete wiring configuration. Check all connections match the diagram. Test continuity with multimeter before final installation. Verify phase relationships are correct. Ready to test or need clarification?"
         }
     
     def get_step_guidance(self, step: int) -> str:
