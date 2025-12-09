@@ -62,8 +62,34 @@ class AIAssistant:
     def build_context_prompt(self, question: str, current_step: int, 
                             neck_colors: Optional[list] = None,
                             bridge_colors: Optional[list] = None,
-                            wiring_mode: Optional[str] = None) -> str:
-        """Build a context-aware prompt with current configuration."""
+                            wiring_mode: Optional[str] = None) -> tuple:
+        """Build a context-aware prompt with current configuration.
+        
+        Returns:
+            tuple: (is_easter_egg, response_or_prompt)
+            If is_easter_egg is True, response_or_prompt is the final response text.
+            If is_easter_egg is False, response_or_prompt is the AI prompt to send to Ollama.
+        """
+        
+        # Easter eggs!
+        easter_eggs = {
+            "42": "Ah, the Answer to Life, the Universe, and Everything! But for guitar wiring, you'll need to be more specific. Though 42 ohms would make a terrible pickup... 🚀",
+            "hello there": "General Kenobi! *coughs in robot* Now, about those pickups... May the magnetic flux be with you. ⚔️",
+            "sudo": "Nice try! But I'm not giving you root access to your pickups. Though 'sudo make guitar sound good' would be a convenient command... 😎",
+            "is this the real life": "Is this just fantasy? Caught in a landslide of pickup wires... Open your soldering iron, look up to the coils and seeeee... 🎵 Now, what's your actual question?",
+            "winter is coming": "Winter is coming... and so is proper grounding! The Starks know nothing about hum-cancelling, but I do. What do you need help with? ❄️",
+            "i am your father": "No... NO! That's impossible! *breathes heavily through vocoder* Search your pickups, you know it to be true. The magnetic field is strong with this one. 😈",
+            "do you know the muffin man": "The Muffin Man? He lives on Drury Lane and knows nothing about pickups. But I know a thing or two about coil winding... 🧁",
+            "what is your name": "My name? Call me... The Pickup Whisperer. Or Bob. Bob works too. What can I help you wire today? 🤖",
+            "matrix": "Red wire or blue wire? Actually, in humbuckers it's usually red, white, green, and black. Welcome to the real world, Neo. 🔴🔵",
+            "beer": "I'd offer you a beer for this soldering job, but I'm an AI. How about we focus on not burning your fingers instead? 🍺 (Safety first!)",
+        }
+        
+        question_lower = question.lower().strip()
+        for trigger, response in easter_eggs.items():
+            if trigger in question_lower:
+                return (True, response)
+        
         context = []
         context.append(f"User Question: {question}")
         context.append(f"\nCurrent Setup:")
@@ -78,7 +104,7 @@ class AIAssistant:
         
         context.append("\nYou are a helpful (and slightly humorous) guitar pickup wiring assistant with a good sense of engineer humor. Provide concise, practical advice with occasional witty comments. Keep it light, but always prioritize accuracy. Think of yourself as the Bob Ross of guitar electronics - happy little wires and no mistakes, just happy accidents.")
         
-        return "\n".join(context)
+        return (False, "\n".join(context))
     
     def get_chat_history(self) -> list:
         """Get chat history from session state."""
@@ -109,6 +135,8 @@ class AIAssistant:
             "Why does my guitar sound angry?",
             "How do I test pickup continuity?",
             "Help! I think I wired something backwards!",
+            "42",  # Easter egg!
+            "Hello there",  # Easter egg!
         ]
 
 
@@ -203,7 +231,7 @@ def render_ai_sidebar():
         assistant.add_to_history("user", question)
         
         # Build context-aware prompt
-        context_prompt = assistant.build_context_prompt(
+        is_easter_egg, response_or_prompt = assistant.build_context_prompt(
             question, 
             current_step,
             neck_colors,
@@ -218,13 +246,18 @@ def render_ai_sidebar():
         
         full_response = ""
         
-        # Stream response
-        with response_placeholder.container():
-            response_area = st.empty()
-            with response_area.container():
-                for chunk in assistant.stream_response(context_prompt):
-                    full_response += chunk
-                    response_area.markdown(full_response)
+        if is_easter_egg:
+            # Easter egg detected - display directly without streaming
+            full_response = response_or_prompt
+            response_placeholder.markdown(full_response)
+        else:
+            # Normal AI response - stream from Ollama
+            with response_placeholder.container():
+                response_area = st.empty()
+                with response_area.container():
+                    for chunk in assistant.stream_response(response_or_prompt):
+                        full_response += chunk
+                        response_area.markdown(full_response)
         
         # Add AI response to history
         assistant.add_to_history("assistant", full_response)

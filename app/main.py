@@ -180,10 +180,13 @@ for _ek in ('exp_neck_north', 'exp_neck_south', 'exp_bridge_north', 'exp_bridge_
 
 # (Removed swap helper at user's request)
 
-st.title('Humbucker Solver, with AI help')
-st.write('Small program, that help you to solve pickup colors and polarities and wounding. '
-         'Follow steps and you know where to solder wires and if your pickups are in hum cancelling.')
-st.caption('⚡ Because life\'s too short for mysterious wire colors and angry hum. Also, we can\'t guarantee your guitar will sound better, but at least you\'ll know *why* it doesn\'t. 🎸')
+st.title('🎸 Humbucker Solver — with AI & Questionable Life Choices')
+st.write('**Your pickup wire colors are a mystery. Your soldering skills are... a work in progress. Let\'s fix at least one.**\n\n'
+         'This engineer\'s assistant will guide you through: identifying wire colors, testing magnetic polarity, measuring resistance, '
+         'and wiring your pickups so they *actually* cancel hum (instead of adding more). '
+         'Follow the steps. Trust the math. Blame the manufacturer if it doesn\'t work.')
+st.caption('⚡ **Why?** Because life\'s too short for mystery wires, reversed coils, and ground loops that hum louder than your amp. '
+           'Also, we can\'t guarantee your guitar will sound better, but at least you\'ll know *why* it doesn\'t (and how to fix it). 🎸')
 
 # Background music - always embedded, controlled by user
 st.markdown(
@@ -1087,6 +1090,34 @@ def render_pickup_preview(which, height=120):
     else:
         st.image(img_path, use_column_width=True)
 
+def _check_easter_egg_hints(user_input: str) -> str:
+    """Check if user input contains easter egg triggers and return witty response or empty string."""
+    if not isinstance(user_input, str):
+        return ''
+    
+    text = user_input.lower().strip()
+    
+    # Easter egg triggers with guitar/wiring themed responses
+    easter_eggs = {
+        '42': '🎸 **The Answer to Life, The Universe, and Guitar Wiring?** Forty-two. Also the resistance of my patience when I measure wires. ⚡',
+        'hello there': '🎸 **General Kenobi!** You are a bold one. Also, use a compass on your pickups — it helps.',
+        'sudo': '🎸 **Nice try, hacker.** This is a guitar app, not a terminal. Though I respect the attempt to bypass physics. 🔐',
+        'is this the real life': '🎸 **Is this just fantasy?** No, this is your wiring diagram. And yes, you *are* caught in a landslide. ⚡',
+        'winter is coming': '🎸 **And so is your hum-cancelling test!** The North coil sends its regards. ❄️',
+        'i am your father': '🎸 **No, the BARE WIRE is your father.** It grounds everything. Accept your heritage. 👨‍⚡',
+        'muffin man': '🎸 **Do you know the man on Drury Lane?** He wires pickups, and he\'s *excellent*. You should be like him. 🧁',
+        'what is your name': '🎸 **I\'m just a humble wire-color assistant.** But you can call me... *The Hum Whisperer*. 🎵',
+        'matrix': '🎸 **There is no series wiring.** There is only... parallel. Also, the red pill tastes like pickup solder. 💊',
+        'beer': '🎸 **Ah yes, the fuel of late-night guitar projects.** May your solder joints be as smooth as your taste in beverages. 🍺',
+    }
+    
+    # Check for exact matches or substring matches
+    for trigger, response in easter_eggs.items():
+        if trigger in text:
+            return response
+    
+    return ''
+
 def _render_step_nav():
     # Use on_click callbacks so Streamlit handles the rerun and UI updates immediately
     cols = st.columns([1, 6, 1])
@@ -1110,13 +1141,28 @@ with st.expander('Step 2 — Define wire colors', expanded=(step == 2)):
     st.header('Step 2 — Define wire colors')
     st.write('Choose up to 4 conductor colors for each pickup (and check bare if present).')
     st.caption('🌈 Fun fact: Pickup manufacturers use color codes like they\'re playing guitar wire roulette. Red means... something. Probably.')
+    st.info('💡 **Hint:** If you\'re not sure which wires are which, use a multimeter to measure resistance between wire pairs. The pairs with similar resistance belong together!')
+    st.caption('🎸 *Psst... try typing a famous sci-fi phrase or a number into the AI sidebar. You might discover something fun.* 😉')
+    
     COLOR_OPTIONS = ['Red', 'White', 'Green', 'Black', 'Yellow', 'Blue', 'Bare']
     col1 = st.multiselect('Neck wire colors (ordered)', COLOR_OPTIONS,
                           default=_safe_default_list(COLOR_OPTIONS, st.session_state.get('neck_wire_colors', ['Red', 'White', 'Green', 'Black'])),
                           key='neck_wire_colors')
+    
+    # Easter egg check for neck colors
+    easter_response = _check_easter_egg_hints(str(col1))
+    if easter_response:
+        st.success(easter_response)
+    
     col2 = st.multiselect('Bridge wire colors (ordered)', COLOR_OPTIONS,
                           default=_safe_default_list(COLOR_OPTIONS, st.session_state.get('bridge_wire_colors', ['Red', 'White', 'Green', 'Black'])),
                           key='bridge_wire_colors')
+    
+    # Easter egg check for bridge colors
+    easter_response = _check_easter_egg_hints(str(col2))
+    if easter_response:
+        st.success(easter_response)
+    
     bare = st.checkbox('Bare (ground) present', value=st.session_state.get('bare', False), key='bare')
 
 
@@ -1124,6 +1170,7 @@ with st.expander('Step 3 — Polarity (top of pickup)', expanded=(step == 3)):
     st.header('Step 3 — Polarity (top of pickup)')
     st.write('Use a compass over the pickup (top of pickup). Slug = North coil; Screw = South coil.')
     st.caption('🧭 Yes, an actual compass. The same technology that helped Vikings navigate... now helps you wire pickups. Progress!')
+    st.info('💡 **Hint:** Hold the compass FLAT over the pole pieces. The needle pointing away = North pole. The needle pointing toward = South pole. Simple physics!')
     neck_toggle = st.checkbox('Neck — top is Slug (N)', value=st.session_state.get('neck_is_north_up', True), key='neck_is_north_up', on_change=_on_neck_toggle)
     bridge_toggle = st.checkbox('Bridge — top is Slug (N)', value=st.session_state.get('bridge_is_north_up', True), key='bridge_is_north_up', on_change=_on_bridge_toggle)
     # Keep the legacy orientation string in session_state for compatibility with other code
@@ -1155,7 +1202,14 @@ with st.expander('Step 4 — Measurements', expanded=(step == 4)):
     st.header('Step 4 — Measurements')
     st.write('Enter coil resistances found in Step 5 measurement (kΩ).')
     st.caption('📊 Resistance is NOT futile — it\'s actually around 5-15 kΩ per coil. Physics: 1, Inspirational quotes: 0.')
+    st.info('💡 **Hint:** Use an ohmmeter (multimeter on Ω setting). Touch probes to opposite coil wires. Typical humbuckers: 5-15k each coil. If you see wildly different values, check your connections!')
+    st.caption('🎸 *Psst... what if one coil measured exactly **42 kΩ**? That would be quite the answer. Try it!* 😉')
+    
+    # Input fields for resistances with easter egg detection
     n_up = st.number_input('Neck — upper coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('n_up', 0.0), key='n_up')
+    if n_up == 42:
+        st.success('🎸 **42?** The answer to everything, including pickup resistance. Well played.')
+    
     n_lo = st.number_input('Neck — lower coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('n_lo', 0.0), key='n_lo')
     b_up = st.number_input('Bridge — upper coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('b_up', 0.0), key='b_up')
     b_lo = st.number_input('Bridge — lower coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('b_lo', 0.0), key='b_lo')
@@ -1213,6 +1267,8 @@ with st.expander('Step 4 — Measurements', expanded=(step == 4)):
 with st.expander('Step 5 — Phase checks', expanded=(step == 5)):
     st.header('Step 5 — Phase checks (touch pole piece)')
     st.caption('🔬 Time to channel your inner scientist! Touch pole pieces with a multimeter. If the needle goes up, congrats — you found "Normal" phase. If it goes down, you found "Reverse" (or as we call it, "the pickup is feeling rebellious today").')
+    st.info('💡 **Hint:** Set multimeter to DC resistance. Connect RED probe to one coil wire, BLACK probe to the other. While connected, touch a POLE PIECE with a screwdriver (or any metal object — yes, that counts as "proper lab technique"). If resistance RISES = Normal phase. If resistance LOWERS = Reverse phase. Test both wires to identify START and FINISH. (And no, the pole piece won\'t bite. Probably.)')
+    st.caption('🎸 *Psst... if you ask the AI assistant \"hello there\", it might respond in an *interesting* way. Pop culture references are fair game!* 😉')
     # Probe→Wire mapping: let the user indicate which wire each probe contacted
     st.subheader('Probe → Wire mapping')
     st.write(f"Start from NECK-{n_pol['top']} and finish mapping to BRIDGE-{n_pol['bottom']}. Select which wire the RED probe touched and which wire the BLACK probe touched.")
@@ -1255,6 +1311,14 @@ with st.expander('Step 5 — Phase checks', expanded=(step == 5)):
         cols = st.columns(2)
         cols[0].radio(f'RED PROBE touched ({title})', opts, index=_safe_index(opts, st.session_state.get(red_key)), key=red_key)
         cols[1].radio(f'BLACK PROBE touched ({title})', opts, index=_safe_index(opts, st.session_state.get(black_key)), key=black_key)
+        
+        # Easter egg check for probe wire selections
+        red_wire = st.session_state.get(red_key, '')
+        black_wire = st.session_state.get(black_key, '')
+        easter_response = _check_easter_egg_hints(f"{red_wire} {black_wire}")
+        if easter_response:
+            st.success(easter_response)
+        
         # show compact badges under the radios for immediate confirmation
         badge_cols = st.columns([1, 3])
         badge_cols[0].markdown('')
@@ -1318,6 +1382,7 @@ with st.expander('Step 6 — Analyze Wiring', expanded=(step == 6)):
     st.header('Step 6 — Analyze Wiring & Generate Diagram')
     st.write('Review your phase testing results and generate the final wiring diagram.')
     st.caption('🎯 The moment of truth! Let\'s see if these pickups will hum-cancel or just... hum. (Spoiler: if they hum, blame the manufacturer, not the app. We\'re just the messenger.)')
+    st.info('💡 **Hint:** Your wiring diagram shows START and FINISH for each coil. START wires go to HOT. FINISH wires (and BARE) go to GROUND. Series wires link the two coils together.')
     
     if st.button('Analyze wiring'):
         # Gather inputs and run analysis
@@ -1829,18 +1894,40 @@ with st.expander('Step 6 — Analyze Wiring', expanded=(step == 6)):
                         ground_bus = neck_ground + bridge_ground
                         if neck_has_bare or bridge_has_bare:
                             ground_bus.append('Bare')
-                        combined_wiring = {
-                            'mode': 'parallel',
-                            'steps': {
-                                'starts_to_hot': neck_hot + bridge_hot,
-                                'ends_to_ground': ground_bus,
-                                'note': 'Parallel rule: north start + south start -> HOT; north end + south end -> GND (each pickup already series internally)',
-                                'pickup_internal_series_links': {
-                                    'neck_series_link': neck_order.get('series', []),
-                                    'bridge_series_link': order.get('series', [])
+                        
+                        # Check if coils within each pickup are in parallel (both output wires to hot)
+                        # This happens when both START and FINISH are in the hot bus (full coil parallel)
+                        neck_coil_parallel = len(neck_hot) >= 2
+                        bridge_coil_parallel = len(bridge_hot) >= 2
+                        
+                        if neck_coil_parallel or bridge_coil_parallel:
+                            # Full parallel mode: coils in parallel within pickup + pickups in parallel to each other
+                            combined_wiring = {
+                                'mode': 'parallel_full',
+                                'steps': {
+                                    'all_coil_outputs_to_hot': neck_hot + bridge_hot,
+                                    'all_series_links_to_ground': ground_bus,
+                                    'note': 'Full parallel: each coil\'s output (RED + BLACK) to HOT, each coil\'s series link (GREEN + WHITE) to GND, pickups in parallel to each other. Low impedance, high output.',
+                                    'pickup_internal_parallel_coils': {
+                                        'neck_coil_outputs': neck_hot,
+                                        'bridge_coil_outputs': bridge_hot
+                                    }
                                 }
                             }
-                        }
+                        else:
+                            # Standard parallel: pickups in parallel, coils internally series
+                            combined_wiring = {
+                                'mode': 'parallel',
+                                'steps': {
+                                    'starts_to_hot': neck_hot + bridge_hot,
+                                    'ends_to_ground': ground_bus,
+                                    'note': 'Parallel rule: north start + south start -> HOT; north end + south end -> GND (each pickup already series internally)',
+                                    'pickup_internal_series_links': {
+                                        'neck_series_link': neck_order.get('series', []),
+                                        'bridge_series_link': order.get('series', [])
+                                    }
+                                }
+                            }
             
             wiring_json = {
                 'pickups': pickups_list,
