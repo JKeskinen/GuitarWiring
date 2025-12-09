@@ -1,0 +1,70 @@
+=== STEP 4 ===
+with st.expander('Step 4 — Measurements', expanded=(step == 4)):
+    st.header('Step 4 — Measurements')
+    st.write('Enter coil resistances found in Step 5 measurement (kΩ).')
+    n_up = st.number_input('Neck — upper coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('n_up', 0.0), key='n_up')
+    n_lo = st.number_input('Neck — lower coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('n_lo', 0.0), key='n_lo')
+    b_up = st.number_input('Bridge — upper coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('b_up', 0.0), key='b_up')
+    b_lo = st.number_input('Bridge — lower coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('b_lo', 0.0), key='b_lo')
+    st.markdown('---')
+    st.subheader('Map wires to coils')
+    st.write('Select which wire colors belong to the Top/Upper coil and Bottom/Lower coil for each pickup.')
+    neck_colors = st.session_state.get('neck_wire_colors', [])
+    bridge_colors = st.session_state.get('bridge_wire_colors', [])
+    default_neck_top = _safe_default_list(neck_colors, st.session_state.get('neck_north_colors', neck_colors[:2]))
+    default_neck_bottom = _safe_default_list(neck_colors, st.session_state.get('neck_south_colors', neck_colors[2:4]))
+    default_bridge_top = _safe_default_list(bridge_colors, st.session_state.get('bridge_north_colors', bridge_colors[:2]))
+    default_bridge_bottom = _safe_default_list(bridge_colors, st.session_state.get('bridge_south_colors', bridge_colors[2:4]))
+
+
+    # Neck — Top / Upper selector: hidden by default; use an expander to edit
+    cols = st.columns([6, 1])
+    cols[0].markdown(_render_color_badges(st.session_state.get('neck_north_colors', [])), unsafe_allow_html=True)
+    cols[1].markdown('')
+    with st.expander('Edit Neck — Top wire colors', expanded=st.session_state.get('exp_neck_north', False)):
+        st.multiselect('', neck_colors, default=default_neck_top, key='neck_north_colors', on_change=_on_neck_north_changed)
+    
+
+    # Neck — Bottom / Lower selector: edit via expander
+    cols = st.columns([6, 1])
+    cols[0].markdown(_render_color_badges(st.session_state.get('neck_south_colors', [])), unsafe_allow_html=True)
+    cols[1].markdown('')
+    with st.expander('Neck — Bottom wire colors', expanded=st.session_state.get('exp_neck_south', False)):
+        st.multiselect(' ', [c for c in neck_colors if c not in st.session_state.get('neck_north_colors', [])], default=default_neck_bottom, key='neck_south_colors', on_change=_on_neck_south_changed)
+
+    # Bridge — Top / Upper selector: edit via expander
+    cols = st.columns([6, 1])
+    cols[0].markdown(_render_color_badges(st.session_state.get('bridge_north_colors', [])), unsafe_allow_html=True)
+    cols[1].markdown('')
+    with st.expander('Bridge — Top wire colors', expanded=st.session_state.get('exp_bridge_north', False)):
+        st.multiselect('', bridge_colors, default=default_bridge_top, key='bridge_north_colors', on_change=_on_bridge_north_changed)
+
+    # Bridge — Bottom / Lower selector: edit via expander
+    cols = st.columns([6, 1])
+    cols[0].markdown(_render_color_badges(st.session_state.get('bridge_south_colors', [])), unsafe_allow_html=True)
+    cols[1].markdown('')
+    with st.expander('Bridge — Bottom wire colors', expanded=st.session_state.get('exp_bridge_south', False)):
+        st.multiselect('', [c for c in bridge_colors if c not in st.session_state.get('bridge_north_colors', [])], default=default_bridge_bottom, key='bridge_south_colors', on_change=_on_bridge_south_changed)
+    # validate mapping
+    mapping_ok = True
+    if len(st.session_state.get('neck_north_colors', [])) != 2 or len(st.session_state.get('neck_south_colors', [])) != 2:
+        st.warning('Please select exactly 2 colors for each neck coil (top and bottom).')
+        mapping_ok = False
+    if len(st.session_state.get('bridge_north_colors', [])) != 2 or len(st.session_state.get('bridge_south_colors', [])) != 2:
+        st.warning('Please select exactly 2 colors for each bridge coil (top and bottom).')
+        mapping_ok = False
+    if mapping_ok:
+        st.info('Mapping looks good — use the top "Next" button to proceed to Phase checks.')
+    else:
+        st.info('Please fix the mapping warnings above. Select exactly 2 colors per coil before proceeding.')
+
+
+=== STEP 5 ===
+
+
+=== STEP 6 ===
+
+
+=== STEP 7 ===
+
+
