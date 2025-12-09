@@ -482,9 +482,81 @@ with st.sidebar:
 
 # Sidebar AI helper — small keyword-driven knowledge base for soldering and hum-cancelling
 st.sidebar.header('AI helper (soldering & hum-cancelling)')
-question = st.sidebar.text_input('Ask about soldering, hum-cancelling, wiring, or diagnostics', '')
 
-# Small health-check for local Ollama / local AI server
+# Define FAQ knowledge base and helper function before using them
+FAQ_KB = {
+    'soldering_tools': (
+        '**Soldering — Tools & safety**\n'
+        '- Use a temperature-controlled iron (350–380°C / 660–715°F for electronics).\n'
+        '- Use rosin-core 60/40 or 63/37 solder for electronics; 0.7–1.0 mm diameter is convenient.\n'
+        '- Work in a well-ventilated area and wear eye protection.\n'
+        '- Keep tip clean with a damp sponge and tin the tip before and after use.\n'
+        '- Pre-tin wires and pads: heat the part, then apply solder to make a small shiny cone — then join.\n'
+    ),
+    'soldering_steps': (
+        '**Soldering — Basic steps**\n'
+        '1) Strip ~3–6 mm of insulation.\n'
+        '2) Twist stranded wire or tin it lightly.\n'
+        '3) Heat the joint (pad or lug) with the iron, apply solder to the joint (not directly to the iron).\n'
+        '4) Withdraw solder, then iron, and let the joint cool without moving.\n'
+        '5) Inspect for a smooth, shiny, concave joint ("volcano").\n'
+    ),
+    'hum_cancelling_overview': (
+        '**Hum-cancelling — Overview**\n'
+        '- Humbuckers cancel mains hum by combining two coils with opposite magnetic polarity and opposite electrical phase.\n'
+        '- To cancel hum, coils must be reverse-wound *and* reverse-polarity (RWRP).\n'
+        '- If one coil is reversed only electrically (phase) but not magnetically, cancellation fails.\n'
+    ),
+    'hum_cancelling_when_wiring': (
+        '**Wiring tips to preserve hum-cancelling**\n'
+        '- Wire the two coils in series or parallel as intended by the pickup design. Modern humbuckers use series for full output.\n'
+        '- When splitting coils (coil-split), you lose one coil and thus the hum cancellation — use noise-free split circuits or stacking designs if you need single-coil tone without hum.\n'
+        '- For phase switching (series ↔ parallel ↔ split) use proper switching that preserves magnetic/ electrical relationships.\n'
+    ),
+    'grounding': (
+        '**Grounding & shielding**\n'
+        '- Ground (pot backs, chassis) must be connected to pickup ground (bare or black depending on manufacturer).\n'
+        '- Solder the bare (shield) to ground; do not rely on friction contacts.\n'
+        '- Use shielding (copper tape, conductive paint) in control cavities and connect it to ground to reduce hum.\n'
+    ),
+    'phase_checks': (
+        '**Phase checking (practical)**\n'
+        '- Use a multimeter: measure DC resistance of coils to identify which wires are which.\n'
+        '- Use a small metal probe to touch pole pieces while measuring resistance: if resistance goes up when touched, that coil end is the positive lead for that polarity test.\n'
+        '- Swap coil connections if you detect reversed electrical polarity so North START == HOT mapping matches expected wiring.\n'
+    ),
+    'coil_split_hum': (
+        '**Coil-splitting & hum**\n'
+        '- Coil split disables one coil; hum cancellation is lost and single-coil hum will reappear.\n'
+        '- To reduce hum while split: use resistor or phase-cancellation circuits, or use stacked noiseless pickups that emulate single-coil tone without hum.\n'
+    ),
+}
+
+def _ai_helper_answer(q: str) -> str:
+    ql = (q or '').lower()
+    if not ql.strip():
+        return 'Ask a specific question about soldering, grounding, or hum-cancelling (e.g. "How do I solder a pot lug?", "Why does my coil hum after splitting?").'
+    # keyword matching
+    if any(k in ql for k in ('solder', 'soldering', 'iron', 'tin', 'solder tip', 'desolder')):
+        return FAQ_KB['soldering_tools'] + '\n\n' + FAQ_KB['soldering_steps']
+    if any(k in ql for k in ('hum', 'hum cancelling', 'hum-cancelling', 'noise cancelling', 'hum cancel')):
+        return FAQ_KB['hum_cancelling_overview'] + '\n\n' + FAQ_KB['hum_cancelling_when_wiring']
+    if any(k in ql for k in ('ground', 'shield', 'shielding', 'bare', 'grounding')):
+        return FAQ_KB['grounding']
+    if any(k in ql for k in ('phase', 'phase check', 'polarity', 'probe', 'resistance increase', 'reverse')):
+        return FAQ_KB['phase_checks']
+    if any(k in ql for k in ('split', 'coil split', 'coil-split', 'splitting')):
+        return FAQ_KB['coil_split_hum']
+    # fallback: give general guidance + resources
+    return (
+        "I don't have a perfect match for that question. Here are general tips:\n\n"
+        "- Be specific: mention if it's about a pot lug, jack, soldering stranded wire, coil-splitting wiring, or shielding.\n"
+        "- For step-by-step soldering: use a temperature-controlled iron, clean/tin the tip, pre-tin wires, heat the joint, apply solder to the joint, and let cool.\n\n"
+        "Useful references: StewMac (stewmac.com) and Seymour Duncan (seymourduncan.com) have practical wiring and soldering guides."
+    )
+
+# Ask question input and button
+question = st.sidebar.text_input('Ask about soldering, hum-cancelling, wiring, or diagnostics', '', key='ai_question')
 def check_local_ai(host: str = None, timeout: float = 1.0) -> dict:
     """Return dict with keys: available (bool), url (str), details (str).
 
@@ -530,18 +602,35 @@ def check_local_ai(host: str = None, timeout: float = 1.0) -> dict:
         result['details'] = str(e)
     return result
 
-# Show local AI connection status in the sidebar (small, non-blocking)
-try:
-    status = check_local_ai()
-    if status.get('available'):
-        st.sidebar.success(f"Local AI available — {status.get('url')} ({status.get('details')})")
-    else:
-        st.sidebar.warning(f"Local AI not reachable — {status.get('url')} ({status.get('details')})")
-except Exception as e:
+# Show local AI connection status in the sidebar (auto-updates every 3 seconds)
+ai_status_placeholder = st.sidebar.empty()
+
+def update_ai_status():
     try:
-        st.sidebar.error(f"Local AI status check failed: {e}")
-    except Exception:
-        pass
+        status = check_local_ai()
+        if status.get('available'):
+            ai_status_placeholder.success(f"Local AI available — {status.get('url')} ({status.get('details')})")
+        else:
+            ai_status_placeholder.warning(f"Local AI not reachable — {status.get('url')} ({status.get('details')})")
+    except Exception as e:
+        try:
+            ai_status_placeholder.error(f"Local AI status check failed: {e}")
+        except Exception:
+            pass
+
+# Initial check
+update_ai_status()
+
+# Auto-refresh status every 3 seconds
+if 'last_ai_check' not in st.session_state:
+    st.session_state['last_ai_check'] = 0
+
+import time
+current_time = time.time()
+if current_time - st.session_state['last_ai_check'] > 3:
+    st.session_state['last_ai_check'] = current_time
+    update_ai_status()
+    st.rerun()
 
 
 # Generic caller that attempts a few common Ollama endpoints to get text output.
@@ -700,107 +789,38 @@ def call_local_ai(prompt: str, model: str = 'mistral:7b', timeout: float = 6.0) 
 
     return {'ok': False, 'text': '', 'error': '\n'.join(diag_lines)}
 
-# Sidebar: allow opting into direct AI responses from a local model
-try:
-    use_ai = st.sidebar.checkbox('Use AI responses (experimental)', value=False, key='use_ai_responses')
-    ai_model = st.sidebar.text_input('Model name', value=st.session_state.get('ai_model', 'mistral:7b'), key='ai_model')
-    st.session_state['ai_model'] = ai_model
-except Exception:
-    use_ai = False
-    ai_model = 'mistral'
+# Sidebar: AI responses are always enabled
+st.session_state['ai_model'] = 'mistral:7b'
+st.session_state['use_ai_responses'] = True
 
-FAQ_KB = {
-    'soldering_tools': (
-        '**Soldering — Tools & safety**\n'
-        '- Use a temperature-controlled iron (350–380°C / 660–715°F for electronics).\n'
-        '- Use rosin-core 60/40 or 63/37 solder for electronics; 0.7–1.0 mm diameter is convenient.\n'
-        '- Work in a well-ventilated area and wear eye protection.\n'
-        '- Keep tip clean with a damp sponge and tin the tip before and after use.\n'
-        '- Pre-tin wires and pads: heat the part, then apply solder to make a small shiny cone — then join.\n'
-    ),
-    'soldering_steps': (
-        '**Soldering — Basic steps**\n'
-        '1) Strip ~3–6 mm of insulation.\n'
-        '2) Twist stranded wire or tin it lightly.\n'
-        '3) Heat the joint (pad or lug) with the iron, apply solder to the joint (not directly to the iron).\n'
-        '4) Withdraw solder, then iron, and let the joint cool without moving.\n'
-        '5) Inspect for a smooth, shiny, concave joint ("volcano").\n'
-    ),
-    'hum_cancelling_overview': (
-        '**Hum-cancelling — Overview**\n'
-        '- Humbuckers cancel mains hum by combining two coils with opposite magnetic polarity and opposite electrical phase.\n'
-        '- To cancel hum, coils must be reverse-wound *and* reverse-polarity (RWRP).\n'
-        '- If one coil is reversed only electrically (phase) but not magnetically, cancellation fails.\n'
-    ),
-    'hum_cancelling_when_wiring': (
-        '**Wiring tips to preserve hum-cancelling**\n'
-        '- Wire the two coils in series or parallel as intended by the pickup design. Modern humbuckers use series for full output.\n'
-        '- When splitting coils (coil-split), you lose one coil and thus the hum cancellation — use noise-free split circuits or stacking designs if you need single-coil tone without hum.\n'
-        '- For phase switching (series ↔ parallel ↔ split) use proper switching that preserves magnetic/ electrical relationships.\n'
-    ),
-    'grounding': (
-        '**Grounding & shielding**\n'
-        '- Ground (pot backs, chassis) must be connected to pickup ground (bare or black depending on manufacturer).\n'
-        '- Solder the bare (shield) to ground; do not rely on friction contacts.\n'
-        '- Use shielding (copper tape, conductive paint) in control cavities and connect it to ground to reduce hum.\n'
-    ),
-    'phase_checks': (
-        '**Phase checking (practical)**\n'
-        '- Use a multimeter: measure DC resistance of coils to identify which wires are which.\n'
-        '- Use a small metal probe to touch pole pieces while measuring resistance: if resistance goes up when touched, that coil end is the positive lead for that polarity test.\n'
-        '- Swap coil connections if you detect reversed electrical polarity so North START == HOT mapping matches expected wiring.\n'
-    ),
-    'coil_split_hum': (
-        '**Coil-splitting & hum**\n'
-        '- Coil split disables one coil; hum cancellation is lost and single-coil hum will reappear.\n'
-        '- To reduce hum while split: use resistor or phase-cancellation circuits, or use stacked noiseless pickups that emulate single-coil tone without hum.\n'
-    ),
-}
+# Handle Ask button for AI helper
+ask_button = st.sidebar.button('Ask', key='ask_button')
 
-def _ai_helper_answer(q: str) -> str:
-    ql = (q or '').lower()
-    if not ql.strip():
-        return 'Ask a specific question about soldering, grounding, or hum-cancelling (e.g. "How do I solder a pot lug?", "Why does my coil hum after splitting?").'
-    # keyword matching
-    if any(k in ql for k in ('solder', 'soldering', 'iron', 'tin', 'solder tip', 'desolder')):
-        return FAQ_KB['soldering_tools'] + '\n\n' + FAQ_KB['soldering_steps']
-    if any(k in ql for k in ('hum', 'hum cancelling', 'hum-cancelling', 'noise cancelling', 'hum cancel')):
-        return FAQ_KB['hum_cancelling_overview'] + '\n\n' + FAQ_KB['hum_cancelling_when_wiring']
-    if any(k in ql for k in ('ground', 'shield', 'shielding', 'bare', 'grounding')):
-        return FAQ_KB['grounding']
-    if any(k in ql for k in ('phase', 'phase check', 'polarity', 'probe', 'resistance increase', 'reverse')):
-        return FAQ_KB['phase_checks']
-    if any(k in ql for k in ('split', 'coil split', 'coil-split', 'splitting')):
-        return FAQ_KB['coil_split_hum']
-    # fallback: give general guidance + resources
-    return (
-        "I don't have a perfect match for that question. Here are general tips:\n\n"
-        "- Be specific: mention if it's about a pot lug, jack, soldering stranded wire, coil-splitting wiring, or shielding.\n"
-        "- For step-by-step soldering: use a temperature-controlled iron, clean/tin the tip, pre-tin wires, heat the joint, apply solder to the joint, and let cool.\n\n"
-        "Useful references: StewMac (stewmac.com) and Seymour Duncan (seymourduncan.com) have practical wiring and soldering guides."
-    )
+if ask_button and question.strip():
+    # Store question in session to persist the response
+    st.session_state['last_ai_question'] = question
+    st.session_state['ai_response'] = None  # Reset to show loading
+    
+    # Call AI immediately
+    model = st.session_state.get('ai_model', 'mistral:7b')
+    try:
+        resp = call_local_ai(question, model=model)
+        if resp.get('ok'):
+            st.session_state['ai_response'] = resp.get('text')
+            st.session_state['ai_error'] = None
+        else:
+            st.session_state['ai_error'] = resp.get('error')
+            st.session_state['ai_response'] = _ai_helper_answer(question)
+    except Exception as e:
+        st.session_state['ai_error'] = str(e)
+        st.session_state['ai_response'] = _ai_helper_answer(question)
 
-if st.sidebar.button('Ask'):
-    # If user opted into AI responses, send the raw question to the local model
-    if st.session_state.get('use_ai_responses'):
-        model = st.session_state.get('ai_model', 'mistral')
-        try:
-            resp = call_local_ai(question, model=model)
-            if resp.get('ok'):
-                st.sidebar.markdown(resp.get('text') or '_(no text returned)_')
-            else:
-                # Fallback to a short error then the canned FAQ
-                st.sidebar.error(f"AI call failed: {resp.get('error')}")
-                answer = _ai_helper_answer(question)
-                st.sidebar.markdown(answer)
-        except Exception as e:
-            st.sidebar.error(f"AI call exception: {e}")
-            answer = _ai_helper_answer(question)
-            st.sidebar.markdown(answer)
-    else:
-        answer = _ai_helper_answer(question)
-        # show as markdown for readability
-        st.sidebar.markdown(answer)
+# Display stored response if available
+if st.session_state.get('ai_response'):
+    st.sidebar.markdown('**Response:**')
+    st.sidebar.markdown(st.session_state['ai_response'])
+    if st.session_state.get('ai_error'):
+        st.sidebar.info(f"Note: {st.session_state['ai_error']}")
 
 # Top navigation for steps (Previous / Next)
 MAX_STEP = 6
@@ -1217,11 +1237,13 @@ with st.expander('Step 5 — Phase checks', expanded=(step == 5)):
 
 
 # Step 6: Show analysis
-def _compute_wiring_order(upper_map: dict, lower_map: dict, wiring_type: str, bare_present: bool = False) -> dict:
+def _compute_wiring_order(upper_map: dict, lower_map: dict, wiring_type: str, bare_present: bool = False, upper_phase: str = 'Normal', lower_phase: str = 'Normal') -> dict:
     """Compute wiring order for given wiring_type.
 
     upper_map / lower_map are expected to have keys 'start' and 'finish' (wire color names).
     wiring_type: 'series' | 'parallel' | 'slug_only' | 'screw_only'
+    upper_phase: 'Normal' | 'Reverse' - phase of upper coil
+    lower_phase: 'Normal' | 'Reverse' - phase of lower coil
 
     Returns a dict with keys: 'output' (list), 'series' (list, only for series), 'ground' (list), 'notes' (str|None).
     """
@@ -1233,16 +1255,28 @@ def _compute_wiring_order(upper_map: dict, lower_map: dict, wiring_type: str, ba
     order = {'output': [], 'series': [], 'ground': [], 'notes': None}
 
     if wiring_type == 'series':
-        # SERIES: North Start → HOT, North Finish + South Finish → SOLDERED TOGETHER, South Start → GROUND
-        if u_start:
-            order['output'] = [u_start]
-        order['series'] = [w for w in (u_finish, l_finish) if w]
-        order['ground'] = [w for w in ([l_start] + (['Bare'] if bare_present else [])) if w]
+        # SERIES wiring depends on phase:
+        # RWRP (different phases): Coil1 start → HOT, Coil1 end + Coil2 end → LINK, Coil2 start → GROUND
+        # Same phase (both Normal or both Reverse): Coil1 start → HOT, Coil1 end + Coil2 start → LINK, Coil2 end → GROUND
+        if upper_phase != lower_phase:
+            # Different phase (RWRP): connect ends together
+            if u_start:
+                order['output'] = [u_start]
+            order['series'] = [w for w in (u_finish, l_finish) if w]
+            order['ground'] = [w for w in ([l_start] + (['Bare'] if bare_present else [])) if w]
+        else:
+            # Same phase: connect end to start
+            if u_start:
+                order['output'] = [u_start]
+            order['series'] = [w for w in (u_finish, l_start) if w]
+            order['ground'] = [w for w in ([l_finish] + (['Bare'] if bare_present else [])) if w]
+            order['series'] = [w for w in (u_finish, l_start) if w]
+            order['ground'] = [w for w in ([l_finish] + (['Bare'] if bare_present else [])) if w]
 
     elif wiring_type == 'parallel':
-        # PARALLEL: North Start + South Finish → HOT, North Finish + South Start → GROUND
-        order['output'] = [w for w in (u_start, l_finish) if w]
-        order['ground'] = [w for w in (u_finish, l_start) if w]
+        # PARALLEL: Coil1 start + Coil2 start → HOT, Coil1 end + Coil2 end → GROUND
+        order['output'] = [w for w in (u_start, l_start) if w]
+        order['ground'] = [w for w in (u_finish, l_finish) if w]
         if bare_present:
             order['ground'].append('Bare')
 
@@ -1255,14 +1289,54 @@ def _compute_wiring_order(upper_map: dict, lower_map: dict, wiring_type: str, ba
             order['ground'].append('Bare')
 
     elif wiring_type == 'screw_only':
-            # SCREW ONLY (manufacturer): Red + Green + White → HOT, Black (+ Bare) → GROUND
-            order['output'] = [w for w in (u_start, u_finish, l_finish) if w]  # Red, Green, White
-            order['ground'] = [w for w in ([l_start] + (['Bare'] if bare_present else [])) if w]  # Black (+ Bare)
+            # SCREW ONLY: Upper coil only - Upper Start → HOT, Upper Finish + Lower Start + Lower Finish → GROUND
+            if u_start:
+                order['output'] = [u_start]
+            order['ground'] = [w for w in (u_finish, l_start, l_finish) if w]
+            if bare_present:
+                order['ground'].append('Bare')
 
     else:
         order['notes'] = 'Unknown wiring variant requested.'
 
     return order
+
+def _calculate_total_resistance(north_res_kohm, south_res_kohm, wiring_type: str) -> float:
+    """Calculate total resistance based on wiring configuration.
+    
+    Args:
+        north_res_kohm: Resistance of north/upper coil in kΩ
+        south_res_kohm: Resistance of south/lower coil in kΩ
+        wiring_type: 'series' | 'parallel' | 'slug_only' | 'screw_only'
+    
+    Returns:
+        Total resistance in kΩ, or None if data is incomplete
+    """
+    if north_res_kohm is None or south_res_kohm is None:
+        return None
+    
+    north = float(north_res_kohm) if north_res_kohm else None
+    south = float(south_res_kohm) if south_res_kohm else None
+    
+    if north is None or south is None:
+        return None
+    
+    if wiring_type == 'series':
+        # Series: resistances add
+        return north + south
+    elif wiring_type == 'parallel':
+        # Parallel: 1/R_total = 1/R1 + 1/R2
+        if north == 0 or south == 0:
+            return None
+        return (north * south) / (north + south)
+    elif wiring_type == 'slug_only':
+        # Only north coil is used
+        return north
+    elif wiring_type == 'screw_only':
+        # Only south coil is used
+        return south
+    else:
+        return None
 
 def _find_candidate(base_name):
     exts = ['.svg', '.png', '.jpg', '.jpeg']
@@ -1703,7 +1777,68 @@ if st.session_state['step'] == 6:
         
         st.markdown('---')
         
-        wiring_choice = st.selectbox('Choose wiring variant', ['series', 'parallel', 'slug_only', 'screw_only'], index=0)
+        # Enhanced wiring selector with multi-pickup options
+        wiring_options = [
+            'NECK - series',
+            'NECK - parallel',
+            'NECK - slug only',
+            'NECK - screw only',
+            'BRIDGE - series',
+            'BRIDGE - parallel',
+            'BRIDGE - slug only',
+            'BRIDGE - screw only',
+            'BOTH - series',
+            'BOTH - parallel',
+            'BOTH - coil split (upper + lower parallel)'
+        ]
+        wiring_selection = st.selectbox('Choose wiring configuration:', wiring_options, index=0)
+        
+        # Parse selection to determine which pickup(s) and wiring type
+        if 'BOTH' in wiring_selection:
+            if 'coil split' in wiring_selection:
+                # Coil split: always uses upper coils if available
+                # NECK pickup determines the configuration
+                # Get NECK upper coil probe result to determine magnet pole
+                neck_upper_probe = st.session_state.get('n_up_probe', 'Normal Phase')
+                neck_upper_is_south = 'Screw' in str(st.session_state.get('neck_north_colors', [''])[0]) if st.session_state.get('neck_north_colors') else False
+                
+                # Determine which wiring type for each pickup
+                # If NECK upper is south magnet, BRIDGE must use north (slug)
+                # If NECK upper is north magnet, BRIDGE must use south (screw)
+                if neck_upper_is_south:
+                    neck_wiring_choice = 'screw_only'  # NECK uses upper (south coil)
+                    bridge_wiring_choice = 'slug_only'  # BRIDGE uses upper (north coil)
+                else:
+                    neck_wiring_choice = 'slug_only'   # NECK uses upper (north coil)
+                    bridge_wiring_choice = 'screw_only' # BRIDGE uses upper (south coil)
+                both_coil_split = True
+                pickups_connection = 'parallel'  # Coil split always uses parallel
+            else:
+                # BOTH series/parallel means: both pickups have coils in SERIES internally,
+                # then the two pickups are wired in series or parallel to each other
+                # So both pickups always use 'series' for their internal wiring
+                neck_wiring_choice = 'series'
+                bridge_wiring_choice = 'series'
+                both_coil_split = False
+                # Extract how the two pickups are connected to each other
+                pickups_connection = wiring_selection.split(' - ')[1].lower()  # 'series' or 'parallel'
+        elif 'NECK' in wiring_selection:
+            wiring_type = wiring_selection.split(' - ')[1].lower().replace(' ', '_')
+            neck_wiring_choice = wiring_type
+            bridge_wiring_choice = 'series'  # default, not used
+            both_coil_split = False
+            pickups_connection = None
+        else:  # BRIDGE
+            wiring_type = wiring_selection.split(' - ')[1].lower().replace(' ', '_')
+            bridge_wiring_choice = wiring_type
+            neck_wiring_choice = 'series'  # default, not used
+            both_coil_split = False
+            pickups_connection = None
+        
+        # Which pickups to show/compute
+        show_neck = 'NECK' in wiring_selection or 'BOTH' in wiring_selection
+        show_bridge = 'BRIDGE' in wiring_selection or 'BOTH' in wiring_selection
+        
         bare_present = bool(st.session_state.get('bare', False))
 
         # recompute maps for this pickup (reuse previously-defined helpers)
@@ -1724,56 +1859,316 @@ if st.session_state['step'] == 6:
             st.session_state.get('b_lo_probe'),
             st.session_state.get('b_lo_swap', False)
         )
+        
+        # Get phase information from Step 5 probe selections for both pickups
+        # BRIDGE
+        bridge_north_phase_str = st.session_state.get('b_up_probe', 'Normal Phase')
+        bridge_south_phase_str = st.session_state.get('b_lo_probe', 'Normal Phase')
+        bridge_north_phase = 'Reverse' if 'Reverse' in bridge_north_phase_str else 'Normal'
+        bridge_south_phase = 'Reverse' if 'Reverse' in bridge_south_phase_str else 'Normal'
+        
+        # NECK
+        neck_north_phase_str = st.session_state.get('n_up_probe', 'Normal Phase')
+        neck_south_phase_str = st.session_state.get('n_lo_probe', 'Normal Phase')
+        neck_north_phase = 'Reverse' if 'Reverse' in neck_north_phase_str else 'Normal'
+        neck_south_phase = 'Reverse' if 'Reverse' in neck_south_phase_str else 'Normal'
 
         if st.button('Compute wiring order'):
-            order = _compute_wiring_order(upper_map, lower_map, wiring_choice, bare_present=bare_present)
-            st.markdown(f"**Wiring variant:** {wiring_choice.replace('_', ' ').title()}")
-            if 'series' in order:
-                st.write(f"Hot (to switch): {', '.join(order.get('output', [])) or '<unknown>'}")
-                st.write(f"Series link (join together): {', '.join(order.get('series', [])) or '<none>'}")
-                st.write(f"Grounds: {', '.join(order.get('ground', [])) or '<unknown>'}")
-            else:
-                st.write(f"Output wires (to output/switch): {', '.join(order.get('output', [])) or '<unknown>'}")
-                st.write(f"Ground wires: {', '.join(order.get('ground', [])) or '<unknown>'}")
-            if order.get('notes'):
-                st.info(order.get('notes'))
+            try:
+                # Compute for requested pickup(s)
+                if show_bridge:
+                    order = _compute_wiring_order(upper_map, lower_map, bridge_wiring_choice, bare_present=bare_present, upper_phase=bridge_north_phase, lower_phase=bridge_south_phase)
+                    st.markdown(f"**BRIDGE - Wiring variant:** {bridge_wiring_choice.replace('_', ' ').title()}")
+                    if 'series' in order:
+                        st.write(f"Hot (to switch): {', '.join(order.get('output', [])) or '<unknown>'}")
+                        st.write(f"Series link (join together): {', '.join(order.get('series', [])) or '<none>'}")
+                        st.write(f"Grounds: {', '.join(order.get('ground', [])) or '<unknown>'}")
+                    else:
+                        st.write(f"Output wires (to output/switch): {', '.join(order.get('output', [])) or '<unknown>'}")
+                        st.write(f"Ground wires: {', '.join(order.get('ground', [])) or '<unknown>'}")
+                    if order.get('notes'):
+                        st.info(order.get('notes'))
+                
+                if show_neck:
+                    neck_order = _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase)
+                    st.markdown(f"**NECK - Wiring variant:** {neck_wiring_choice.replace('_', ' ').title()}")
+                    if 'series' in neck_order:
+                        st.write(f"Hot (to switch): {', '.join(neck_order.get('output', [])) or '<unknown>'}")
+                        st.write(f"Series link (join together): {', '.join(neck_order.get('series', [])) or '<none>'}")
+                        st.write(f"Grounds: {', '.join(neck_order.get('ground', [])) or '<unknown>'}")
+                    else:
+                        st.write(f"Output wires (to output/switch): {', '.join(neck_order.get('output', [])) or '<unknown>'}")
+                        st.write(f"Ground wires: {', '.join(neck_order.get('ground', [])) or '<unknown>'}")
+                    if neck_order.get('notes'):
+                        st.info(neck_order.get('notes'))
 
-            # Display wiring configuration as JSON for AI context
-            st.markdown('**Wiring configuration (JSON format for AI assistance):**')
-            
-            # Get phase information from Step 5 probe selections
-            bridge_north_phase_str = st.session_state.get('b_up_probe', 'Normal Phase')
-            bridge_south_phase_str = st.session_state.get('b_lo_probe', 'Normal Phase')
-            bridge_north_phase = 'Reverse' if 'Reverse' in bridge_north_phase_str else 'Normal'
-            bridge_south_phase = 'Reverse' if 'Reverse' in bridge_south_phase_str else 'Normal'
-            
-            wiring_json = {
-                'pickup': 'BRIDGE',
-                'variant': wiring_choice,
-                'coils': {
-                    'coil1_slug': {
-                        'name': 'Coil 1: Slug (North/Upper)',
-                        'positive_lead': upper_map.get('start'),
-                        'negative_lead': upper_map.get('finish'),
-                        'phase': bridge_north_phase
-                    },
-                    'coil2_screw': {
-                        'name': 'Coil 2: Screw (South/Lower)',
-                        'positive_lead': lower_map.get('start'),
-                        'negative_lead': lower_map.get('finish'),
-                        'phase': bridge_south_phase
-                    }
-                },
-                'wiring_configuration': {
-                    'output': order.get('output', []),
-                    'series': order.get('series', []),
-                    'ground': order.get('ground', []),
-                    'bare_present': bare_present,
-                    'rwrp': 'Yes' if bridge_north_phase != bridge_south_phase else 'No'
+                # Display wiring configuration as JSON for AI context
+                st.markdown('**Wiring configuration (JSON format for AI assistance):**')
+                
+                # Get neck pickup wiring (same logic as bridge but with neck session keys)
+                neck_upper_map = infer_start_finish_from_probes(
+                    st.session_state.get('neck_north_colors', []),
+                    _none_if_dash(st.session_state.get('n_up_probe_red_wire')),
+                    _none_if_dash(st.session_state.get('n_up_probe_black_wire')),
+                    st.session_state.get('n_up_probe'),
+                    st.session_state.get('n_up_swap', False)
+                )
+                neck_lower_map = infer_start_finish_from_probes(
+                    st.session_state.get('neck_south_colors', []),
+                    _none_if_dash(st.session_state.get('n_lo_probe_red_wire')),
+                    _none_if_dash(st.session_state.get('n_lo_probe_black_wire')),
+                    st.session_state.get('n_lo_probe'),
+                    st.session_state.get('n_lo_swap', False)
+                )
+                
+                # Recompute orders for correct wiring types
+                if show_bridge:
+                    order = _compute_wiring_order(upper_map, lower_map, bridge_wiring_choice, bare_present=bare_present, upper_phase=bridge_north_phase, lower_phase=bridge_south_phase)
+                else:
+                    order = {}
+                
+                if show_neck:
+                    neck_order = _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase)
+                else:
+                    neck_order = {}
+                
+                # Calculate resistances for both pickups
+                neck_north_res = st.session_state.get('n_up')
+                neck_south_res = st.session_state.get('n_lo')
+                neck_total_res = _calculate_total_resistance(neck_north_res, neck_south_res, neck_wiring_choice)
+                
+                bridge_north_res = st.session_state.get('b_up')
+                bridge_south_res = st.session_state.get('b_lo')
+                bridge_total_res = _calculate_total_resistance(bridge_north_res, bridge_south_res, bridge_wiring_choice)
+                
+                # Build JSON with selected pickups
+                pickups_list = []
+                
+                if show_neck:
+                    # For coil split: NECK uses upper coil only
+                    if both_coil_split:
+                        # Coil split mode: determine which magnet pole is upper for NECK
+                        neck_upper_is_south = 'Screw' in str(st.session_state.get('neck_north_colors', [''])[0]) if st.session_state.get('neck_north_colors') else False
+                        
+                        if neck_upper_is_south:
+                            # NECK upper is south magnet (screw coil)
+                            coil_name = 'Upper/Screw (South)'
+                            coil_map = neck_lower_map
+                            coil_res = neck_south_res
+                            coil_phase = neck_south_phase
+                        else:
+                            # NECK upper is north magnet (slug coil)
+                            coil_name = 'Upper/Slug (North)'
+                            coil_map = neck_upper_map
+                            coil_res = neck_north_res
+                            coil_phase = neck_north_phase
+                        
+                        pickups_list.append({
+                            'pickup': 'NECK (coil split - upper coil)',
+                            'variant': neck_wiring_choice,
+                            'coils': {
+                                'coil_upper': {
+                                    'name': f'Coil: {coil_name}',
+                                    'start': coil_map.get('start'),
+                                    'finish': coil_map.get('finish'),
+                                    'phase': coil_phase,
+                                    'resistance_kohm': coil_res
+                                }
+                            },
+                            'wiring_configuration': {
+                                'output': _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase).get('output', []),
+                                'series': [],
+                                'ground': _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase).get('ground', []),
+                                'bare_present': bare_present,
+                                'parallel_with': 'BRIDGE (upper coil)',
+                                'total_resistance_kohm': round(coil_res, 2) if coil_res else None
+                            }
+                        })
+                    else:
+                        # Normal mode: NECK with selected wiring type
+                        neck_order = _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase)
+                        pickups_list.append({
+                            'pickup': 'NECK',
+                            'variant': neck_wiring_choice,
+                            'coils': {
+                                'coil1_slug_north': {
+                                    'name': 'Coil 1: Slug (North/Upper)',
+                                    'start': neck_upper_map.get('start'),
+                                    'finish': neck_upper_map.get('finish'),
+                                    'phase': neck_north_phase,
+                                    'resistance_kohm': neck_north_res
+                                },
+                                'coil2_screw_south': {
+                                    'name': 'Coil 2: Screw (South/Lower)',
+                                    'start': neck_lower_map.get('start'),
+                                    'finish': neck_lower_map.get('finish'),
+                                    'phase': neck_south_phase,
+                                    'resistance_kohm': neck_south_res
+                                }
+                            },
+                            'wiring_configuration': {
+                                'output': neck_order.get('output', []),
+                                'series': neck_order.get('series', []),
+                                'ground': neck_order.get('ground', []),
+                                'bare_present': bare_present,
+                                'rwrp': 'Yes' if neck_north_phase != neck_south_phase else 'No',
+                                'total_resistance_kohm': round(neck_total_res, 2) if neck_total_res else None
+                            }
+                        })
+                
+                if show_bridge:
+                    # For coil split: BRIDGE uses upper coil only (opposite magnet pole from NECK)
+                    if both_coil_split:
+                        # Coil split mode: determine which magnet pole is upper for BRIDGE
+                        # BRIDGE uses opposite pole from NECK
+                        neck_upper_is_south = 'Screw' in str(st.session_state.get('neck_north_colors', [''])[0]) if st.session_state.get('neck_north_colors') else False
+                        
+                        if neck_upper_is_south:
+                            # NECK upper is south, so BRIDGE upper must be north (slug coil)
+                            coil_name = 'Upper/Slug (North)'
+                            coil_map = upper_map
+                            coil_res = bridge_north_res
+                            coil_phase = bridge_north_phase
+                        else:
+                            # NECK upper is north, so BRIDGE upper must be south (screw coil)
+                            coil_name = 'Upper/Screw (South)'
+                            coil_map = lower_map
+                            coil_res = bridge_south_res
+                            coil_phase = bridge_south_phase
+                        
+                        bridge_order = _compute_wiring_order(upper_map, lower_map, bridge_wiring_choice, bare_present=bare_present, upper_phase=bridge_north_phase, lower_phase=bridge_south_phase)
+                        pickups_list.append({
+                            'pickup': 'BRIDGE (coil split - upper coil)',
+                            'variant': bridge_wiring_choice,
+                            'coils': {
+                                'coil_upper': {
+                                    'name': f'Coil: {coil_name}',
+                                    'start': coil_map.get('start'),
+                                    'finish': coil_map.get('finish'),
+                                    'phase': coil_phase,
+                                    'resistance_kohm': coil_res
+                                }
+                            },
+                            'wiring_configuration': {
+                                'output': bridge_order.get('output', []),
+                                'series': [],
+                                'ground': bridge_order.get('ground', []),
+                                'bare_present': bare_present,
+                                'parallel_with': 'NECK (upper coil)',
+                                'total_resistance_kohm': round(coil_res, 2) if coil_res else None
+                            }
+                        })
+                    else:
+                        # Normal mode: BRIDGE with selected wiring type
+                        order = _compute_wiring_order(upper_map, lower_map, bridge_wiring_choice, bare_present=bare_present, upper_phase=bridge_north_phase, lower_phase=bridge_south_phase)
+                        pickups_list.append({
+                            'pickup': 'BRIDGE',
+                            'variant': bridge_wiring_choice,
+                            'coils': {
+                                'coil1_slug_north': {
+                                    'name': 'Coil 1: Slug (North/Upper)',
+                                    'start': upper_map.get('start'),
+                                    'finish': upper_map.get('finish'),
+                                    'phase': bridge_north_phase,
+                                    'resistance_kohm': bridge_north_res
+                                },
+                                'coil2_screw_south': {
+                                    'name': 'Coil 2: Screw (South/Lower)',
+                                    'start': lower_map.get('start'),
+                                    'finish': lower_map.get('finish'),
+                                    'phase': bridge_south_phase,
+                                    'resistance_kohm': bridge_south_res
+                                }
+                            },
+                            'wiring_configuration': {
+                                'output': order.get('output', []),
+                                'series': order.get('series', []),
+                                'ground': order.get('ground', []),
+                                'bare_present': bare_present,
+                                'rwrp': 'Yes' if bridge_north_phase != bridge_south_phase else 'No',
+                                'total_resistance_kohm': round(bridge_total_res, 2) if bridge_total_res else None
+                            }
+                        })
+                
+                # Calculate combined total resistance when both pickups are present
+                # Use series or parallel formula depending on how pickups are connected
+                combined_total_res = None
+                combined_wiring = None
+                if show_neck and show_bridge:
+                    if neck_total_res and bridge_total_res:
+                        neck_res = float(neck_total_res)
+                        bridge_res = float(bridge_total_res)
+                        if neck_res > 0 and bridge_res > 0:
+                            if pickups_connection == 'series':
+                                # Series: resistances add
+                                combined_total_res = neck_res + bridge_res
+                            else:
+                                # Parallel: use parallel formula
+                                combined_total_res = (neck_res * bridge_res) / (neck_res + bridge_res)
+
+                    # Add high-level inter-pickup wiring guidance for BOTH modes (non coil-split)
+                    if pickups_connection in ('series', 'parallel') and not both_coil_split:
+                        neck_hot = neck_order.get('output', []) if neck_order else []
+                        bridge_hot = order.get('output', []) if order else []
+                        neck_ground_raw = neck_order.get('ground', []) if neck_order else []
+                        bridge_ground_raw = order.get('ground', []) if order else []
+
+                        # Keep Bare on the ground bus, but avoid mixing it into the inter-pickup link
+                        def _split_ground(gs: list):
+                            main = [g for g in gs if g and g != 'Bare']
+                            has_bare = any(g == 'Bare' for g in gs)
+                            return main, has_bare
+
+                        neck_ground, neck_has_bare = _split_ground(neck_ground_raw)
+                        bridge_ground, bridge_has_bare = _split_ground(bridge_ground_raw)
+
+                        if pickups_connection == 'series':
+                            # Series between pickups: neck ground -> bridge hot; bridge ground to overall ground
+                            combined_wiring = {
+                                'mode': 'series',
+                                'steps': {
+                                    'hot_to_output': neck_hot,
+                                    'link_neck_ground_to_bridge_hot': neck_ground + bridge_hot,
+                                    'ground': bridge_ground + (['Bare'] if (neck_has_bare or bridge_has_bare) else [])
+                                }
+                                # Include internal series links for clarity when pickups are forced to series
+                                if neck_order.get('series') or order.get('series') else None
+                            }
+                        else:
+                            # Parallel between pickups: both hots together, both grounds together
+                            ground_bus = neck_ground + bridge_ground
+                            if neck_has_bare or bridge_has_bare:
+                                ground_bus.append('Bare')
+                            combined_wiring = {
+                                'mode': 'parallel',
+                                'steps': {
+                                    'starts_to_hot': neck_hot + bridge_hot,
+                                    'ends_to_ground': ground_bus,
+                                    'note': 'Parallel rule: north start + south start -> HOT; north end + south end -> GND (each pickup already series internally)',
+                                    'pickup_internal_series_links': {
+                                        'neck_series_link': neck_order.get('series', []),
+                                        'bridge_series_link': order.get('series', [])
+                                    }
+                                }
+                            }
+                
+                wiring_json = {
+                    'pickups': pickups_list,
+                    'coil_split_mode': both_coil_split,
+                    'combined_total_resistance_kohm': round(combined_total_res, 2) if combined_total_res else None,
+                    'combined_wiring': combined_wiring
                 }
-            }
-            st.json(wiring_json)
-            st.markdown('**Ask AI:** Copy this JSON and ask: "Is this humbucker correctly configured for hum cancelling? Are the coils RWRP (reverse wound + reverse polarity)?"')
+                
+                # Add coil split description only when in coil split mode
+                if both_coil_split:
+                    wiring_json['coil_split_description'] = 'NECK upper coil + BRIDGE upper coil in parallel (opposite poles)'
+                
+                # Display as formatted JSON string for better copy-paste
+                json_str = json.dumps(wiring_json, indent=2)
+                st.code(json_str, language='json')
+                st.markdown('**Ask AI:** Copy this JSON and ask: "Are these humbuckers correctly configured for hum cancelling? Are all coils RWRP (reverse wound + reverse polarity)?"')
+            except Exception as e:
+                st.error(f"Error computing wiring order: {e}")
     except Exception:
         pass
 
