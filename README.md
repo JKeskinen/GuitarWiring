@@ -2,6 +2,13 @@
 
 An interactive web application for analyzing and visualizing humbucker pickup wiring configurations. Built with Streamlit and integrated with Ollama for AI-assisted guidance.
 
+## ⚠️ Recovery Point
+
+If you need to revert to the last stable version, use:
+```bash
+git checkout stable-v1
+```
+
 ## Features
 
 - **Interactive Pickup Analysis**: Measure and analyze humbucker pickup wire configurations
