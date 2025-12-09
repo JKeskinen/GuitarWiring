@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: humbucker-solver
+    env: python
+    plan: free  # or "standard" for paid tier
+    buildCommand: pip install -r app/requirements.txt
+    startCommand: streamlit run app/main.py --server.port=$PORT --server.address=0.0.0.0
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: 1
