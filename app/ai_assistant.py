@@ -15,6 +15,7 @@ class AIAssistant:
     def __init__(self):
         self.ollama_url = os.environ.get('OLLAMA_URL', 'http://127.0.0.1:11434').rstrip('/')
         self.model = os.environ.get('OLLAMA_MODEL', 'mistral:7b')
+        self.ai_available = True  # Will be set to False if connection fails
         
         # Step guidance prompts
         self.step_guides = {
@@ -31,7 +32,10 @@ class AIAssistant:
         return self.step_guides.get(step, "Let me know if you need any help with this step!")
     
     def stream_response(self, prompt: str, timeout: float = 30.0) -> Generator[str, None, None]:
-        """Stream AI response word by word using Ollama API."""
+        """Stream AI response word by word using Ollama API.
+        
+        If Ollama is unavailable, falls back to static FAQ mode.
+        """
         url = f"{self.ollama_url}/api/generate"
         payload = {
             "model": self.model,
@@ -57,7 +61,11 @@ class AIAssistant:
                 except json.JSONDecodeError:
                     continue
         except Exception as e:
-            yield f"\n❌ Error: {str(e)}"
+            # Mark AI as unavailable and fall back to static FAQ mode
+            self.ai_available = False
+            yield "\n⚠️ **AI Assistant unavailable** — Switching to FAQ mode (static knowledge base).\n\n"
+            yield "The AI streaming service isn't available on this deployment. But don't worry — I still have a comprehensive FAQ on soldering, grounding, hum-cancelling, and phase checking.\n\n"
+            yield "Ask me about: **soldering**, **grounding**, **hum-cancelling**, **phase checks**, or **coil splitting**. 🎸"
     
     def build_context_prompt(self, question: str, current_step: int, 
                             neck_colors: Optional[list] = None,
@@ -162,6 +170,13 @@ def render_ai_sidebar():
     st.sidebar.markdown("---")
     st.sidebar.markdown("## 🤖 AI Assistant")
     st.sidebar.caption("*Like having a wise guitar tech in your pocket, minus the coffee breath.*")
+    
+    # Show AI availability status
+    if not assistant.ai_available:
+        st.sidebar.warning(
+            "⚠️ **AI streaming unavailable**\n\n"
+            "Using static FAQ mode. Ask about: soldering, grounding, hum-cancelling, phase checks, or coil splitting."
+        )
     
     # Get current step for automatic guidance
     current_step = st.session_state.get('step', 1)
