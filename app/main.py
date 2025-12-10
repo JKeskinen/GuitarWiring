@@ -1512,18 +1512,8 @@ with st.expander('Step 6 — Analyze Wiring', expanded=(step == 6)):
             neck_north_magnet = 'Slug (North)' if 'Slug' in str(st.session_state.get('neck_north_colors', [''])[0]) else 'Screw (South)'
             neck_south_magnet = 'Screw (South)' if neck_north_magnet == 'Slug (North)' else 'Slug (North)'
 
-            st.markdown(f"""
-            **Upper Coil:** {neck_north_magnet}, Phase: {neck_north_phase}, Resistance: {neck_north_res} kΩ  
-            **Lower Coil:** {neck_south_magnet}, Phase: {neck_south_phase}, Resistance: {neck_south_res} kΩ  
-            **Total Resistance ({neck_wiring_choice}):** {round(neck_total_res, 2) if neck_total_res else 'N/A'} kΩ
-            """)
-
             neck_order = _compute_wiring_order(neck_upper_map, neck_lower_map, neck_wiring_choice, bare_present=bare_present, upper_phase=neck_north_phase, lower_phase=neck_south_phase)
-            st.markdown(f"""
-            **Output (HOT):** {', '.join(neck_order.get('output', []))}  
-            **Series link:** {', '.join(neck_order.get('series', [])) if neck_order.get('series') else 'N/A'}  
-            **Ground:** {', '.join(neck_order.get('ground', []))}
-            """)
+            # Wiring details will be shown in summary at bottom
 
         except Exception as e:
             st.error(f"Error computing neck wiring: {e}")
@@ -1598,18 +1588,8 @@ with st.expander('Step 6 — Analyze Wiring', expanded=(step == 6)):
             bridge_north_magnet = 'Slug (North)' if 'Slug' in str(st.session_state.get('bridge_north_colors', [''])[0]) else 'Screw (South)'
             bridge_south_magnet = 'Screw (South)' if bridge_north_magnet == 'Slug (North)' else 'Slug (North)'
 
-            st.markdown(f"""
-            **Upper Coil:** {bridge_north_magnet}, Phase: {bridge_north_phase}, Resistance: {bridge_north_res} kΩ  
-            **Lower Coil:** {bridge_south_magnet}, Phase: {bridge_south_phase}, Resistance: {bridge_south_res} kΩ  
-            **Total Resistance ({bridge_wiring_choice}):** {round(bridge_total_res, 2) if bridge_total_res else 'N/A'} kΩ
-            """)
-
             order = _compute_wiring_order(upper_map, lower_map, bridge_wiring_choice, bare_present=bare_present, upper_phase=bridge_north_phase, lower_phase=bridge_south_phase)
-            st.markdown(f"""
-            **Output (HOT):** {', '.join(order.get('output', []))}  
-            **Series link:** {', '.join(order.get('series', [])) if order.get('series') else 'N/A'}  
-            **Ground:** {', '.join(order.get('ground', []))}
-            """)
+            # Wiring details will be shown in summary at bottom
 
         except Exception as e:
             st.error(f"Error computing bridge wiring: {e}")
@@ -1940,10 +1920,157 @@ with st.expander('Step 6 — Analyze Wiring', expanded=(step == 6)):
             if both_coil_split:
                 wiring_json['coil_split_description'] = 'NECK upper coil + BRIDGE upper coil in parallel (opposite poles)'
             
-            # Display as formatted JSON string for better copy-paste
-            json_str = json.dumps(wiring_json, indent=2)
-            st.code(json_str, language='json')
-            st.markdown('**Ask AI:** Copy this JSON and ask: "Are these humbuckers correctly configured for hum cancelling? Are all coils RWRP (reverse wound + reverse polarity)?"')
+            # HUM-CANCELLING VALIDATION
+            st.subheader('🔍 Hum-Cancelling Check')
+            
+            # Add reference diagram info
+            with st.expander('📚 Humbucker Configuration Reference'):
+                cols = st.columns(2)
+                
+                with cols[0]:
+                    st.markdown("**Config A (Traditional)**")
+                    st.markdown("*NECK* - N-S orientation")
+                    # Config A: NECK is always N-S (North on top)
+                    try:
+                        with open('app/humbuckerNORTH.svg', 'r') as f:
+                            svg_content = f.read()
+                        st.image(svg_content, width=200)
+                    except:
+                        st.error("Could not load humbuckerNORTH.svg")
+                    
+                    st.markdown("*BRIDGE* - S-N orientation")
+                    # Config A: BRIDGE is always S-N (South on top)
+                    try:
+                        with open('app/humbuckerSOUTH.svg', 'r') as f:
+                            svg_content = f.read()
+                        st.image(svg_content, width=200)
+                    except:
+                        st.error("Could not load humbuckerSOUTH.svg")
+                    st.caption("✅ Opposite magnets + same phase")
+                
+                with cols[1]:
+                    st.markdown("**Config B (Symmetrical)**")
+                    st.markdown("*NECK* - N-S orientation")
+                    # Config B: NECK is N-S (North on top)
+                    try:
+                        with open('app/humbuckerNORTH.svg', 'r') as f:
+                            svg_content = f.read()
+                        st.image(svg_content, width=200)
+                    except:
+                        st.error("Could not load humbuckerNORTH.svg")
+                    
+                    st.markdown("*BRIDGE* - N-S orientation")
+                    # Config B: BRIDGE is also N-S (North on top)
+                    try:
+                        with open('app/humbuckerNORTH.svg', 'r') as f:
+                            svg_content = f.read()
+                        st.image(svg_content, width=200)
+                    except:
+                        st.error("Could not load humbuckerNORTH.svg")
+                    st.caption("✅ Same magnets + opposite phase")
+                
+                st.markdown("---")
+                st.markdown("""
+                **Notes:**
+                - 🔴 **Red Coil** = North magnet
+                - ⚫ **Black Coil** = South magnet
+                - Hook-up cable always exits the baseplate below the **south coil**, except when a reversed magnet is ordered
+                - **Configuration A (Traditional):** Opposite magnet orientations - most common wiring
+                - **Configuration B (Symmetrical):** Same magnet orientations - used with symmetrical neck pickup when hum-cancelling is required between inner or outer coils of both pickups
+                """)
+            
+            def _validate_hum_cancelling():
+                """
+                Check if pickups are configured for proper hum-cancelling.
+                Rules:
+                1. Within each pickup: opposite phase between coils = hum-cancelling ✅
+                2. Between pickups (when both active): must have opposite polarity AND opposite phase
+                """
+                issues = []
+                warnings = []
+                
+                # Check NECK pickup internal hum-cancelling
+                if neck_north_phase == neck_south_phase:
+                    issues.append(f"⚠️ **NECK pickup**: Both coils are {neck_north_phase} phase. This will NOT hum-cancel! One coil should be Normal, the other Reverse.")
+                else:
+                    warnings.append(f"✅ **NECK pickup**: Coils have opposite phase ({neck_north_phase} vs {neck_south_phase}) — hum-cancelling OK")
+                
+                # Check BRIDGE pickup internal hum-cancelling
+                if bridge_north_phase == bridge_south_phase:
+                    issues.append(f"⚠️ **BRIDGE pickup**: Both coils are {bridge_north_phase} phase. This will NOT hum-cancel! One coil should be Normal, the other Reverse.")
+                else:
+                    warnings.append(f"✅ **BRIDGE pickup**: Coils have opposite phase ({bridge_north_phase} vs {bridge_south_phase}) — hum-cancelling OK")
+                
+                return issues, warnings
+            
+            try:
+                hum_issues, hum_warnings = _validate_hum_cancelling()
+                
+                if hum_issues:
+                    st.error('**Hum-Cancelling Issues Detected:**')
+                    for issue in hum_issues:
+                        st.markdown(issue)
+                    st.markdown('💡 **Fix:** Swap one coil\'s wiring (START ↔ FINISH) to reverse its phase. Or twist the coil\'s wires to reverse polarity.')
+                
+                if hum_warnings:
+                    for warning in hum_warnings:
+                        if '✅' in warning:
+                            st.success(warning)
+                        else:
+                            st.warning(warning)
+            
+            except Exception as e:
+                st.info(f"Could not validate hum-cancelling: {e}")
+            
+            # Display simplified wiring summary
+            st.subheader('📋 Wiring Summary')
+            
+            # Show pickup configuration in readable format
+            for i, pickup in enumerate(pickups_list):
+                pickup_name = pickup.get('pickup', f'Pickup {i+1}')
+                wiring_config = pickup.get('wiring_configuration', {})
+                total_res = wiring_config.get('total_resistance_kohm', 'N/A')
+                
+                with st.expander(f"**{pickup_name}** - {total_res} kΩ"):
+                    st.markdown(f"**Wiring Mode:** {pickup.get('variant', 'N/A')}")
+                    
+                    # Show coil details
+                    coils = pickup.get('coils', {})
+                    if isinstance(coils, dict):
+                        for coil_key, coil in coils.items():
+                            if isinstance(coil, dict):
+                                coil_name = coil.get('name', coil_key)
+                                start = coil.get('start', 'N/A')
+                                finish = coil.get('finish', 'N/A')
+                                phase = coil.get('phase', 'N/A')
+                                st.markdown(f"- **{coil_name}** ({phase}): {start} (START) → {finish} (FINISH)")
+                    
+                    # Show wiring order
+                    if wiring_config:
+                        st.markdown("**Connection:**")
+                        if wiring_config.get('output'):
+                            st.markdown(f"  - HOT: {', '.join(wiring_config['output'])}")
+                        if wiring_config.get('ground'):
+                            st.markdown(f"  - GROUND: {', '.join(wiring_config['ground'])}")
+                        if wiring_config.get('series'):
+                            st.markdown(f"  - SERIES LINK: {', '.join(wiring_config['series'])}")
+            
+            # Show combined wiring if both pickups
+            if combined_wiring:
+                st.markdown("---")
+                st.markdown(f"**Combined Mode:** {combined_wiring.get('mode', 'N/A').upper()}")
+                if combined_total_res:
+                    st.markdown(f"**Total Resistance:** {round(combined_total_res, 2)} kΩ")
+                
+                steps = combined_wiring.get('steps', {})
+                if steps.get('note'):
+                    st.info(steps['note'])
+            
+            # Show raw JSON in collapsible section for advanced users
+            with st.expander('🔧 Technical Details (JSON)'):
+                json_str = json.dumps(wiring_json, indent=2)
+                st.code(json_str, language='json')
+                st.markdown('**For AI Analysis:** Copy this JSON and ask: "Are these humbuckers correctly configured for hum cancelling?"')
         except Exception as e:
             st.error(f"Error computing wiring order: {e}")
 
