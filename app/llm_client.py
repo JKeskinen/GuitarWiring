@@ -115,6 +115,54 @@ class SimpleLLM:
         result = "".join(parts).strip()
         return result if result else resp.text
 
+    def embeddings(self, texts, timeout: int = 10):
+        """Compute embeddings for a list of texts using the Ollama-like endpoint.
+
+        Returns a dict: {'ok': bool, 'embeddings': list or None, 'error': str}
+        """
+        if self.backend != "ollama":
+            return {'ok': False, 'embeddings': None, 'error': 'LLM backend not configured for Ollama'}
+
+        # Try common embeddings endpoint shapes
+        endpoints = [
+            '/v1/embeddings',
+            '/api/embeddings',
+        ]
+        headers = {'Content-Type': 'application/json'}
+        payload = {'model': self.model, 'input': texts}
+
+        for ep in endpoints:
+            try:
+                url = f"{self.ollama_url}{ep}"
+                r = requests.post(url, json=payload, headers=headers, timeout=timeout)
+            except Exception as e:
+                last_err = str(e)
+                continue
+            try:
+                r.raise_for_status()
+            except Exception:
+                last_err = f'Status {r.status_code}: {r.text[:200]}'
+                continue
+
+            try:
+                j = r.json()
+                # Try OpenAI-like response shape
+                if isinstance(j, dict) and 'data' in j:
+                    embs = [d.get('embedding') for d in j.get('data')]
+                    return {'ok': True, 'embeddings': embs, 'error': ''}
+                # Try direct list
+                if isinstance(j, list):
+                    return {'ok': True, 'embeddings': j, 'error': ''}
+                # Fallback: maybe key 'embeddings'
+                if isinstance(j, dict) and 'embeddings' in j:
+                    return {'ok': True, 'embeddings': j.get('embeddings'), 'error': ''}
+                return {'ok': False, 'embeddings': None, 'error': 'Unknown embeddings response: ' + str(j)[:200]}
+            except Exception as e:
+                last_err = str(e)
+                continue
+
+        return {'ok': False, 'embeddings': None, 'error': last_err}
+
 
 # Small FAQ + wrapper that first checks a local knowledge base, then falls back
 # to an LLM backend (SimpleLLM) if requested/available.

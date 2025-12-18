@@ -1,73 +1,126 @@
-# AI Guitar Humbucker Assistant
+# Humbucker Solver
 
-This project is a course work for the course "Utilizing Generative AI" (Finnish: "Generatiivisen tekoälyn hyödyntäminen"). It is an interactive assistant for designing, configuring, and understanding guitar humbucker pickups using AI-powered logic and step-by-step guidance.
+Status: Finalized for course submission. This README documents how to run the app, how local AI is used, and where to find the core code.
 
-## Overview
+What this project is
+--------------------
+A Streamlit application that guides you through identifying pickup wires, testing pickup phase, and producing a wiring analysis for two humbucker pickups. It includes an optional local LLM assistant used for explanations, step guidance, and brief troubleshooting.
 
-The application helps users:
-- Design and configure custom humbucker pickups
-- Understand wiring modes and switch configurations
-- Get step-by-step instructions for assembly and soldering
-- Summarize and document pickup configurations
+Web app overview
+----------------
+Purpose: This web app is designed to help guitar hobbyists, technicians, and students systematically identify pickup wire colors, determine coil polarity/phase, and assemble a correct wiring configuration for humbucker pickups. It reduces guesswork by providing step-by-step UI flows, automated checks, and clear soldering instructions.
 
+What it does (features):
+- Interactive page-per-step workflow: Walks users through Welcome → Wire color selection → Polarity checks → Measurements → Probe/phase checks → Final analysis.
+- Wire-to-coil mapping: Let users map detected wire colors to the pickup's coils (upper/lower), then validate selections.
+- Phase & probe guidance: Guides the user to touch pole pieces and record resistance changes to determine START/FINISH and electrical phase.
+- Soldering instructions & safety tips: Provides concise, practical soldering steps and safety reminders in Step 5.
+- AI assistant sidebar: Optional local LLM provides expanded explanations, troubleshooting, and contextual help; short local step guidance is returned instantly for "I'm on step N" queries.
+- Logging & audit: All AI interactions are appended to `app/ai_input_log.jsonl` for review and debugging. The sidebar includes a log viewer and an embeddings probe.
 
-The logic and user interface are implemented in Python. The AI assistant leverages a language model (LLM) to provide context-aware guidance, explanations, and suggestions throughout the pickup design process. This makes the tool suitable for both beginners and experienced guitar enthusiasts.
+Intended users and workflow:
+- Target users: hobbyists replacing or modifying pickups, guitar technicians verifying hum-cancellation, and students learning pickup wiring.
+- Typical workflow: Open the app → define wire colors → perform polarity checks with a multimeter → map probe results → review generated wiring analysis → follow soldering instructions → test.
 
-## How AI is Used and Configured
+Inputs and outputs:
+- Inputs: color selections, multimeter resistance values, probe mapping selections, wiring mode choice.
+- Outputs: wiring analysis, recommended connections for pots/switches, step-by-step soldering guidance, and AI explanations when requested.
 
-The application uses a language model (LLM) to:
-- Interpret user input and provide step-by-step guidance
-- Explain technical concepts related to guitar pickups and wiring
-- Suggest wiring modes, configurations, and troubleshooting tips
-- Summarize and document the user's design choices
+Limitations and assumptions:
+- The app assumes basic user familiarity with a multimeter and safe soldering practices.
+- AI explanations require a local Ollama-compatible server; without it, the app uses a built-in offline FAQ.
+- The tool focuses on humbucker-style dual-coil pickups and typical wiring scenarios; highly custom wiring may require manual adaptation.
 
-### AI Configuration
+Quick start (PowerShell)
+------------------------
+1) Create and activate a venv:
 
-By default, the application is set up to use a local LLM backend (such as Ollama) for AI features. You can configure the AI backend and model using environment variables:
-
-- `LLM_BACKEND`: Set to "ollama" to enable AI features (default)
-- `OLLAMA_URL`: Ollama server URL (default: http://127.0.0.1:11434)
-- `OLLAMA_MODEL`: Model to use (default: mistral)
-
-Example (Windows command prompt):
+```powershell
+python -m venv .venv
+. .venv/Scripts/Activate.ps1
 ```
-set OLLAMA_MODEL=llama2
+
+2) Install dependencies:
+
+```powershell
+pip install -r app/requirements.txt
+```
+
+3) (Optional) Configure local LLM if you want AI responses:
+
+```powershell
+$env:OLLAMA_URL = 'http://127.0.0.1:11434'    # default
+$env:OLLAMA_MODEL = 'mistral:7b'             # set to the exact model id your server reports
+```
+
+4) Start the app:
+
+```powershell
+# preferred launcher
 python start_web.py
+
+# or directly with Streamlit
+python -m streamlit run app/main.py --server.port 8501
 ```
 
-## Project Structure
+How the local AI is used
+------------------------
+- The app talks to a local Ollama-like HTTP server by default (controlled by `OLLAMA_URL` and `OLLAMA_MODEL`).
+- Behavior summary:
+  - On sidebar questions, the app builds a context prompt that includes the user question, the current step, and optional pickup state (neck/bridge coil colors, wiring mode).
+  - If the question matches a local shortcut like "I'm on step N", the app returns a concise local `step_guides[N]` text without calling the LLM.
+  - If the LLM server is reachable, the app streams a response from `/api/generate` for interactive display. If streaming fails but the server health-check is OK, the app will attempt a synchronous generate call so the user still receives AI-generated text.
+  - If the server is not reachable, the app falls back to a small offline FAQ so the user still receives practical guidance.
+  - Responses (prompt + response + metadata) are appended to `app/ai_input_log.jsonl` for audit and debugging.
 
-- `start_web.py`: Entry point to start the web application
-- `app/`: Main application code
-  - `main.py`: Main logic for running the app
-  - `ai_assistant.py`: AI assistant logic
-  - `logic.py`: Core logic for pickup configuration
-  - `llm_client.py`: Handles communication with language models
-  - `wiring.py`: Wiring logic and diagrams
-  - `humbucker.py`: Humbucker pickup data structures
-  - `steps/`: Step-by-step modules for each part of the process
-	 - `step_measurements.py`, `step_pole_assignment.py`, etc.
-  - `requirements.txt`: Python dependencies
+Prompt construction (high-level)
+--------------------------------
+- Prompts are assembled in `app/ai_assistant.py::build_context_prompt()` and include:
+  - The user question
+  - Current step (1..6)
+  - `neck_colors` and `bridge_colors` if available
+  - `wiring_mode` if set
+  - An instruction block that sets the assistant persona: an "engineer-turned-guitarist" who gives concise, safety-first, practical instructions and avoids certain banned language (no nautical/pirate wording, no stage-nickname metaphors).
+- The assistant also contains a small `easter_eggs` map that returns canned replies for certain playful triggers.
 
-## How to Use
+Files and responsibilities
+--------------------------
+- `start_web.py` — small launcher that runs the app from repo root.
+- `app/main.py` — Streamlit UI, page-per-step flow, compact-mode CSS, state backup, and wiring analysis UI.
+- `app/ai_assistant.py` — AI sidebar wrapper: health-check, `build_context_prompt()`, streaming logic, local `step_guides`, JSONL logging, and regeneration logic when responses contain banned casual phrasing.
+- `app/llm_client.py` — `SimpleLLM` HTTP helper used for generation and embeddings.
+- `app/wiring.py`, `app/logic.py` — domain logic: compute wiring order, polarity, and analysis helpers.
+- `app/humbucker.py` — pickup data structures and helpers.
+- `app/steps/` — per-step helpers (measurements, pole assignment, soldering instructions, summary, etc.).
+- `app/_run_ai_query.py` — small helper script to exercise the assistant from the CLI.
+- `app/ai_input_log.jsonl` — local append-only log of prompts and responses (created at runtime).
 
-1. **Install dependencies**
-	- Run `pip install -r app/requirements.txt`
-2. **Start the application**
-	- Run `python start_web.py`
-3. **Follow the instructions**
-	- The assistant will guide you through the process of designing and configuring a humbucker pickup.
+Notes about prompts, safety, and tone
+------------------------------------
+- The app attempts to enforce a consistent tone by:
+  - Including a persona/instruction block in the prompt
+  - Checking LLM responses for banned words (nicknames, pirate phrases). If found, the app will ask the model to regenerate with a stricter prompt.
+  - Returning local step guidance for explicit "I'm on step N" queries to guarantee concise, non-generic answers.
 
-## Features
-- Interactive, step-by-step guidance
-- AI-powered suggestions and explanations
-- Customizable pickup parameters
-- Wiring and switch configuration help
-- Assembly and soldering instructions
+Embedding support
+-----------------
+- You can compute embeddings for recorded responses via `app/llm_client.py::SimpleLLM.embeddings()`; endpoints vary by server implementation and the `OLLAMA_MODEL` value must match the server.
 
-## Requirements
-- Python 3.8 or newer
-- Internet connection (for AI features)
+Troubleshooting
+---------------
+- If AI responses are missing or empty: check that `OLLAMA_URL` is correct and the model specified in `OLLAMA_MODEL` is installed on the server.
+- If embeddings return 404: ensure your model id matches the server listing (e.g., `mistral:7b`).
+- To replay or debug an assistant interaction, run `python app/_run_ai_query.py`.
 
-## License
-This project is for educational purposes as part of the course "Utilizing Generative AI" (Finnish: "Generatiivisen tekoälyn hyödyntäminen").
+
+```powershell
+git add .
+git commit -m "chore: finalize project for submission — README and UI"
+git checkout -b release/course-final
+git push -u origin release/course-final
+```
+
+
+
+
+

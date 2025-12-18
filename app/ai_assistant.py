@@ -19,7 +19,7 @@ class AIAssistant:
         
         # Step guidance prompts
         self.step_guides = {
-            1: "Step 1 - Wiring Mode: Choose how you want to wire your humbuckers (series, parallel, or coil-split). Series gives you fuller tone with both coils, parallel is brighter, and coil-split gives single-coil sound. Think of it like choosing your coffee: series is double espresso, parallel is americano, and coil-split is... well, instant coffee. (Just kidding, coil-split is great!) What would you like to know?",
+            1: "Step 1 - Wiring Mode: Choose wiring mode for your humbuckers:\n- Series: coils in series, higher output, thicker/warmer tone.\n- Parallel: coils in parallel, lower output, clearer/cleaner tone.\n- Coil-split (single-coil): one coil active, single-coil character, may reintroduce hum.\nPractical tips: pick Series for full output and hum-cancel, Parallel for clarity without full loss of hum-cancel, Coil-split for single-coil sound when you accept possible noise. Consider pot value (250k vs 500k) and tone cap when choosing. Tell me which tonal goal you want (warm, bright, clarity, or single-coil), and I\'ll recommend wiring and component values.",
             2: "Step 2 - Measurements: Identify your pickup wire colors for each coil. Use a multimeter to measure resistance between wire pairs to find which wires belong to which coil. Don't solder anything yet - we're just identifying wires! (Yes, I know you're tempted to start soldering. Resist the urge! Your future self will thank you.) Need help with the multimeter?",
             3: "Step 3 - Switch Configuration: Configure your toggle switch positions. This determines which pickup(s) are active in each switch position. Common setup: neck (rhythm), both (middle), bridge (lead). Pro tip: if you wire this backwards, your guitar will work... it'll just be hilariously confusing. Questions about switch wiring?",
             4: "Step 4 - Pole Assignment & Phase Testing: Assign which coil is 'North' (screw side) and which is 'South' (slug side). Use probes to test which wire touched increases resistance - this determines START and FINISH wires. Phase testing is critical for hum-canceling! (Get this wrong and your guitar will hum louder than a bee convention.) Need help understanding polarity?",
@@ -61,11 +61,84 @@ class AIAssistant:
                 except json.JSONDecodeError:
                     continue
         except Exception as e:
-            # Mark AI as unavailable and fall back to static FAQ mode
+            # Re-check health to decide behavior. If the model endpoint is healthy,
+            # ensure we still return AI-generated text by attempting a non-streaming
+            # generate call as a fallback. Only when the server is truly unreachable
+            # do we switch to the offline FAQ fallback.
+            try:
+                health = self.check_health()
+            except Exception:
+                health = {'ok': False}
+
+            if health.get('ok'):
+                # Try a non-streaming (synchronous) generate as a fallback so the
+                # user still receives AI-generated text when the server is online.
+                try:
+                    payload_ns = {
+                        "model": self.model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "max_tokens": 512,
+                    }
+                    r = requests.post(f"{self.ollama_url}/api/generate", json=payload_ns, headers=headers, timeout=timeout)
+                    r.raise_for_status()
+                    try:
+                        jr = r.json()
+                        if isinstance(jr, dict) and "response" in jr:
+                            text = jr.get("response", "")
+                        elif isinstance(jr, dict) and "choices" in jr:
+                            choices = jr.get('choices')
+                            if isinstance(choices, list) and choices:
+                                text = choices[0].get('text', '')
+                            else:
+                                text = str(jr)
+                        else:
+                            text = str(jr)
+                    except Exception:
+                        text = r.text
+
+                    if text:
+                        yield text
+                        return
+                    else:
+                        # If no usable text returned, surface a clear error.
+                        yield f"\n⚠️ **AI call failed** — streaming failed and non-stream generate returned no text.\n"
+                        yield "Please check the LLM server logs and model availability (model id, resources).\n"
+                        return
+                except Exception as ex2:
+                    # Non-streaming generate also failed despite healthy model listing.
+                    yield f"\n⚠️ **AI call failed** — streaming failed and non-stream generate failed: {str(ex2)}\n"
+                    yield "Please check the LLM server logs and model availability (model id, resources).\n"
+                    return
+
+            # Server not healthy: provide an offline FAQ fallback so the user still gets guidance
             self.ai_available = False
             yield "\n⚠️ **AI Assistant unavailable** — Switching to FAQ mode (static knowledge base).\n\n"
-            yield "The AI streaming service isn't available on this deployment. But don't worry — I still have a comprehensive FAQ on soldering, grounding, hum-cancelling, and phase checking.\n\n"
+            yield "The AI streaming service isn't available on this deployment. But don't worry — I still have a concise FAQ on soldering, grounding, hum-cancelling, and phase checking.\n\n"
             yield "Ask me about: **soldering**, **grounding**, **hum-cancelling**, **phase checks**, or **coil splitting**. 🎸"
+
+    def check_health(self, timeout: float = 3.0) -> dict:
+        """Quick health-check against the configured Ollama-like endpoint.
+
+        Returns: {'ok': bool, 'models': list|string, 'error': str}
+        """
+        try:
+            url = f"{self.ollama_url}/v1/models"
+            r = requests.get(url, timeout=timeout)
+            if r.status_code == 200:
+                try:
+                    j = r.json()
+                    models = j.get('data') if isinstance(j, dict) else j
+                except Exception:
+                    models = r.text
+                self.ai_available = True
+                return {'ok': True, 'models': models, 'error': ''}
+            else:
+                self.ai_available = False
+                return {'ok': False, 'models': [], 'error': f'Status {r.status_code}'}
+        except Exception as e:
+            self.ai_available = False
+            return {'ok': False, 'models': [], 'error': str(e)}
     
     def build_context_prompt(self, question: str, current_step: int, 
                             neck_colors: Optional[list] = None,
@@ -110,7 +183,7 @@ class AIAssistant:
         if wiring_mode:
             context.append(f"- Wiring Mode: {wiring_mode}")
         
-        context.append("\nYou are a helpful (and slightly humorous) guitar pickup wiring assistant with a good sense of engineer humor. Provide concise, practical advice with occasional witty comments. Keep it light, but always prioritize accuracy. Think of yourself as the Bob Ross of guitar electronics - happy little wires and no mistakes, just happy accidents.")
+        context.append("\nYou are an experienced guitar tech with a dry, engineer-turned-guitarist sense of humor. Give concise, practical instructions focused on pickups, soldering, phase, and tone. Use short, amp- and gear-flavored one-liners (guitarist humor), and always prioritize accuracy, safety, and clear step-by-step guidance. Avoid nicknames and stage metaphors (for example: 'strummer', 'rockstar', 'take the stage'), avoid pop-culture lines, and do NOT use nautical/pirate phrasing — avoid words like 'captain', 'ship', 'sail', 'matey', 'ahoy', or 'aye'.")
         
         return (False, "\n".join(context))
     
@@ -166,17 +239,26 @@ def render_ai_sidebar():
     """Render the AI assistant sidebar with all interactive features."""
     assistant = AIAssistant()
     init_ai_session_state()
-    
+    # Run a quick health check so the UI accurately reports availability
+    health = assistant.check_health()
+
     st.sidebar.markdown("---")
     st.sidebar.markdown("## 🤖 AI Assistant")
-    st.sidebar.caption("*Like having a wise guitar tech in your pocket, minus the coffee breath.*")
-    
-    # Show AI availability status
-    if not assistant.ai_available:
-        st.sidebar.warning(
-            "⚠️ **AI streaming unavailable**\n\n"
-            "Using static FAQ mode. Ask about: soldering, grounding, hum-cancelling, phase checks, or coil splitting."
-        )
+    st.sidebar.caption("*An amp‑savvy engineer who plays guitar — practical tips, dry jokes, zero pirate talk.*")
+
+    # Show AI availability status (concise)
+    if health.get('ok'):
+        try:
+            models = health.get('models') or []
+            if isinstance(models, list):
+                model_names = ', '.join([m.get('id') if isinstance(m, dict) else str(m) for m in models[:3]])
+            else:
+                model_names = str(models)[:120]
+        except Exception:
+            model_names = ''
+        st.sidebar.success(f"AI available — models: {model_names}")
+    else:
+        st.sidebar.warning(f"AI not reachable: {health.get('error')}")
     
     # Get current step for automatic guidance
     current_step = st.session_state.get('step', 1)
@@ -244,7 +326,42 @@ def render_ai_sidebar():
     if ask_button and question.strip():
         # Add user question to history
         assistant.add_to_history("user", question)
-        
+
+        # If the user asks to explain the current step ("I'm on step N"), return
+        # the local step guidance directly (concise, tuned text) instead of calling LLM.
+        m = re.search(r"i\'??m on step\s*(\d+)", question, re.I)
+        if m:
+            try:
+                step_n = int(m.group(1))
+            except Exception:
+                step_n = current_step
+            full_response = assistant.get_step_guidance(step_n)
+            # Show response container
+            response_container = st.sidebar.container()
+            response_container.markdown("**AI Response:**")
+            response_container.markdown(full_response)
+            assistant.add_to_history("assistant", full_response)
+            st.sidebar.success("✅ Response received (local step guidance)!")
+            # Log the interaction
+            try:
+                import time, os, json
+                log_path = os.path.join('app', 'ai_input_log.jsonl')
+                entry = {
+                    'ts': int(time.time()),
+                    'step': step_n,
+                    'prompt': question,
+                    'response': full_response,
+                    'model': assistant.model,
+                    'health_ok': assistant.ai_available,
+                }
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                with open(log_path, 'a', encoding='utf-8') as lf:
+                    lf.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            except Exception:
+                pass
+            # skip LLM call
+            return
+
         # Build context-aware prompt
         is_easter_egg, response_or_prompt = assistant.build_context_prompt(
             question, 
@@ -273,8 +390,85 @@ def render_ai_sidebar():
                     for chunk in assistant.stream_response(response_or_prompt):
                         full_response += chunk
                         response_area.markdown(full_response)
+
+            # If LLM is reachable and response contains casual/stage/pirate language,
+            # attempt a stricter regeneration that enforces the engineer-guitarist tone.
+            try:
+                # only attempt regeneration when assistant reports available and health ok
+                if assistant.ai_available:
+                    banned = [
+                        'mate', 'matey', 'strummer', 'rockstar', 'stage', 'encore', 'riff',
+                        'lights', 'camera', 'take the stage', 'bow out', 'pre-show', 'may the force'
+                    ]
+                    lc = (full_response or '').lower()
+                    if any(b in lc for b in banned):
+                        # Build a stricter prompt requesting a concise, technical reply
+                        strict_prompt = response_or_prompt + "\n\nPLEASE REGENERATE: answer in a concise, technical engineer-guitarist tone. Do NOT use nicknames, stage metaphors, pop-culture references, or nautical/pirate language. Keep it direct and practical, focused on the user's question."
+                        response_area.markdown("Regenerating response with stricter tone...")
+                        new_resp = ""
+                        for chunk in assistant.stream_response(strict_prompt):
+                            new_resp += chunk
+                            response_area.markdown(new_resp)
+                        full_response = new_resp
+            except Exception:
+                # best-effort: ignore regeneration errors and keep original response
+                pass
         
         # Add AI response to history
         assistant.add_to_history("assistant", full_response)
         
+        # Write interaction to log (jsonl)
+        try:
+            import time, os, json
+            log_path = os.path.join('app', 'ai_input_log.jsonl')
+            entry = {
+                'ts': int(time.time()),
+                'step': current_step,
+                'prompt': response_or_prompt,
+                'response': full_response,
+                'model': assistant.model,
+                'health_ok': assistant.ai_available,
+            }
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            with open(log_path, 'a', encoding='utf-8') as lf:
+                lf.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
+
         st.sidebar.success("✅ Response received!")
+
+        # Show a small log viewer and embedding action for the last response
+        try:
+            with st.sidebar.expander('AI Input Log (recent)', expanded=False):
+                log_path = os.path.join('app', 'ai_input_log.jsonl')
+                if os.path.exists(log_path):
+                    lines = open(log_path, 'r', encoding='utf-8').read().splitlines()
+                    # show last 10 entries
+                    for i, line in enumerate(lines[-10:][::-1], 1):
+                        try:
+                            e = json.loads(line)
+                        except Exception:
+                            e = {'raw': line}
+                        ts = e.get('ts')
+                        prompt_preview = (e.get('prompt') or '')[:200]
+                        st.markdown(f"**#{i}** — {prompt_preview}")
+                        if st.button(f"Show response #{i}", key=f"show_resp_{i}"):
+                            st.text_area('Full response', value=e.get('response') or e.get('raw') or '', height=200)
+                            # Embeddings action for this response
+                            if st.button('Compute embeddings for this response', key=f'emb_{i}'):
+                                try:
+                                    from app.llm_client import SimpleLLM
+                                    llm = SimpleLLM()
+                                    em = llm.embeddings([e.get('response') or ''])
+                                    if em.get('ok') and em.get('embeddings'):
+                                        vec = em.get('embeddings')[0]
+                                        st.write(f'Vector length: {len(vec)}')
+                                        st.write(str(vec[:10]) + ' ...')
+                                    else:
+                                        st.write('Embeddings failed: ' + str(em.get('error')))
+                                except Exception as ex:
+                                    st.write('Embedding error: ' + str(ex))
+                else:
+                    st.info('No log entries yet')
+        except Exception:
+            pass

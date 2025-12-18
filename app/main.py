@@ -13,7 +13,6 @@ try:
         infer_start_finish_from_probes,
         compute_electrical_polarity_from_probe,
     )
-    from app.ai_assistant import render_ai_sidebar, init_ai_session_state
 except Exception:
     # fallback when Streamlit runs this file directly (app/ on sys.path)
     from wiring import (
@@ -25,6 +24,20 @@ except Exception:
         compute_electrical_polarity_from_probe,
     )
     from ai_assistant import render_ai_sidebar, init_ai_session_state
+
+# Ensure AI helper functions are importable regardless of import path used above
+try:
+    from app.ai_assistant import render_ai_sidebar, init_ai_session_state
+except Exception:
+    try:
+        from ai_assistant import render_ai_sidebar, init_ai_session_state
+    except Exception:
+        # If import fails, define safe no-op placeholders to avoid NameError during runs
+        def init_ai_session_state():
+            return
+
+        def render_ai_sidebar():
+            return
 
 # HTTP helper for local AI health check
 try:
@@ -180,13 +193,7 @@ for _ek in ('exp_neck_north', 'exp_neck_south', 'exp_bridge_north', 'exp_bridge_
 
 # (Removed swap helper at user's request)
 
-st.title('🎸 Humbucker Solver — with AI & Questionable Life Choices')
-st.write('**Your pickup wire colors are a mystery. Your soldering skills are... a work in progress. Let\'s fix at least one.**\n\n'
-         'This engineer\'s assistant will guide you through: identifying wire colors, testing magnetic polarity, measuring resistance, '
-         'and wiring your pickups so they *actually* cancel hum (instead of adding more). '
-         'Follow the steps. Trust the math. Blame the manufacturer if it doesn\'t work.')
-st.caption('⚡ **Why?** Because life\'s too short for mystery wires, reversed coils, and ground loops that hum louder than your amp. '
-           'Also, we can\'t guarantee your guitar will sound better, but at least you\'ll know *why* it doesn\'t (and how to fix it). 🎸')
+# Title and intro moved to Step 1 (Welcome) so other steps stay compact
 
 # Background music - always embedded, controlled by user
 st.markdown(
@@ -574,6 +581,43 @@ def _ai_helper_answer(q: str) -> str:
 # Initialize AI session state and render interactive AI sidebar
 init_ai_session_state()
 render_ai_sidebar()
+
+# Compact UI toggle: reduces padding, font-size and image heights to show more content
+if 'compact_ui' not in st.session_state:
+    st.session_state['compact_ui'] = False
+
+with st.sidebar:
+    # Create the checkbox widget with a key; do not assign its return into session_state
+    st.checkbox('Compact UI (less spacing)', value=st.session_state.get('compact_ui', False), key='compact_ui')
+
+def _apply_compact_css():
+    css = """
+    <style>
+    /* Ultra-tight global spacing for compact view */
+    .block-container { padding: 4px 6px !important; }
+    .stApp { font-size: 11px !important; line-height:1.05 !important; }
+    h1 { font-size: 18px !important; margin:4px 0 !important; }
+    h2 { font-size: 14px !important; margin:3px 0 !important; }
+    h3, h4 { font-size: 12px !important; margin:2px 0 !important; }
+    .stMarkdown, .css-1d391kg { margin: 2px 0 !important; }
+    .stButton>button { padding: 3px 6px !important; min-width: 70px !important; font-size:11px !important; }
+    .stTextInput>div>div>input, .stNumberInput>div>div>input, textarea { padding:3px 4px !important; font-size:11px !important }
+    .stRadio, .stCheckbox { margin: 1px 0 !important; }
+    img, svg { max-height: 120px !important; height: auto !important; }
+    .stSidebar .block-container { padding: 4px 6px !important; }
+    /* Reduce column gaps */
+    .stColumns [class*='stColumn'] { padding: 2px !important; }
+    /* Tighter table and json displays */
+    .stDataFrame table { font-size:11px !important; }
+    .stJson { font-size:11px !important; }
+    /* Try to reduce sidebar width slightly */
+    [data-testid='stSidebar'] { max-width: 300px !important; }
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
+
+if st.session_state.get('compact_ui'):
+    _apply_compact_css()
 
 
 # Top navigation for steps (Previous / Next)
@@ -1132,12 +1176,19 @@ _render_step_nav()
 # Simple stepper — render all widgets inside expanders so they are instantiated every run
 step = st.session_state.get('step', 1)
 
-with st.expander('Step 1 — Welcome', expanded=(step == 1)):
+if step == 1:
+    st.title('🎸 Humbucker Solver — with AI & Questionable Life Choices')
+    st.write('**Your pickup wire colors are a mystery. Your soldering skills are... a work in progress. Let\'s fix at least one.**\n\n'
+             'This engineer\'s assistant will guide you through: identifying wire colors, testing magnetic polarity, measuring resistance, '
+             'and wiring your pickups so they *actually* cancel hum (instead of adding more). '
+             'Follow the steps. Trust the math. Blame the manufacturer if it doesn\'t work.')
+    st.caption('⚡ **Why?** Because life\'s too short for mystery wires, reversed coils, and ground loops that hum louder than your amp. '
+               'Also, we can\'t guarantee your guitar will sound better, but at least you\'ll know *why* it doesn\'t (and how to fix it). 🎸')
     st.header('Welcome')
     st.write('Welcome — click the top "Next" to begin wire mapping for your pickups.')
     st.info('💡 **Engineer tip:** If this app confuses you, don\'t worry — the wires in your guitar are *already* confused. We\'re just here to mediate.')
 
-with st.expander('Step 2 — Define wire colors', expanded=(step == 2)):
+if step == 2:
     st.header('Step 2 — Define wire colors')
     st.write('Choose up to 4 conductor colors for each pickup (and check bare if present).')
     st.caption('🌈 Fun fact: Pickup manufacturers use color codes like they\'re playing guitar wire roulette. Red means... something. Probably.')
@@ -1166,7 +1217,7 @@ with st.expander('Step 2 — Define wire colors', expanded=(step == 2)):
     bare = st.checkbox('Bare (ground) present', value=st.session_state.get('bare', False), key='bare')
 
 
-with st.expander('Step 3 — Polarity (top of pickup)', expanded=(step == 3)):
+if step == 3:
     st.header('Step 3 — Polarity (top of pickup)')
     st.write('Use a compass over the pickup (top of pickup). Slug = North coil; Screw = South coil.')
     st.caption('🧭 Yes, an actual compass. The same technology that helped Vikings navigate... now helps you wire pickups. Progress!')
@@ -1198,7 +1249,7 @@ with st.expander('Step 3 — Polarity (top of pickup)', expanded=(step == 3)):
         dbg = {k: st.session_state.get(k) for k in ['neck_is_north_up', 'bridge_is_north_up', 'neck_img_choice', 'bridge_img_choice', 'step']}
         st.json(dbg)
 
-with st.expander('Step 4 — Measurements', expanded=(step == 4)):
+if step == 4:
     st.header('Step 4 — Measurements')
     st.write('Enter coil resistances found in Step 5 measurement (kΩ).')
     st.caption('📊 Resistance is NOT futile — it\'s actually around 5-15 kΩ per coil. Physics: 1, Inspirational quotes: 0.')
@@ -1213,9 +1264,18 @@ with st.expander('Step 4 — Measurements', expanded=(step == 4)):
     n_lo = st.number_input('Neck — lower coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('n_lo', 0.0), key='n_lo')
     b_up = st.number_input('Bridge — upper coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('b_up', 0.0), key='b_up')
     b_lo = st.number_input('Bridge — lower coil (kΩ)', min_value=0.0, format='%.2f', value=st.session_state.get('b_lo', 0.0), key='b_lo')
+    pass
+if step == 5:
+    st.header('Step 5 — Phase checks (touch pole piece)')
+    st.caption('🔬 Time to channel your inner scientist! Touch pole pieces with a multimeter. If the needle goes up, congrats — you found "Normal" phase. If it goes down, you found "Reverse" (or as we call it, "the pickup is feeling rebellious today").')
+    st.info('💡 **Hint:** Set multimeter to DC resistance. Connect RED probe to one coil wire, BLACK probe to the other. While connected, touch a POLE PIECE with a screwdriver (or any metal object — yes, that counts as "proper lab technique"). If resistance RISES = Normal phase. If resistance LOWERS = Reverse phase. Test both wires to identify START and FINISH. (And no, the pole piece won\'t bite. Probably.)')
+    st.caption('🎸 *Psst... if you ask the AI assistant \"hello there\", it might respond in an *interesting* way. Pop culture references are fair game!* 😉')
+    # Probe→Wire mapping + Phase checks (combined header)
+    st.subheader('Probe mapping & Phase checks')
+    st.write(f"Start from NECK-{n_pol['top']} and finish mapping to BRIDGE-{n_pol['bottom']}. For each coil, select which wire the RED probe touched and which wire the BLACK probe touched, then indicate the phase (resistance change when touching a pole piece).")
+
+
     st.markdown('---')
-    st.subheader('Map wires to coils')
-    st.write('Select which wire colors belong to the Top/Upper coil and Bottom/Lower coil for each pickup.')
     neck_colors = st.session_state.get('neck_wire_colors', [])
     bridge_colors = st.session_state.get('bridge_wire_colors', [])
     default_neck_top = _safe_default_list(neck_colors, st.session_state.get('neck_north_colors', neck_colors[:2]))
@@ -1223,35 +1283,30 @@ with st.expander('Step 4 — Measurements', expanded=(step == 4)):
     default_bridge_top = _safe_default_list(bridge_colors, st.session_state.get('bridge_north_colors', bridge_colors[:2]))
     default_bridge_bottom = _safe_default_list(bridge_colors, st.session_state.get('bridge_south_colors', bridge_colors[2:4]))
 
-
-    # Neck — Top / Upper selector: hidden by default; use an expander to edit
     cols = st.columns([6, 1])
     cols[0].markdown(_render_color_badges(st.session_state.get('neck_north_colors', [])), unsafe_allow_html=True)
     cols[1].markdown('')
     with st.expander('Edit Neck — Top wire colors', expanded=st.session_state.get('exp_neck_north', False)):
         st.multiselect('Neck top', neck_colors, default=default_neck_top, key='neck_north_colors', label_visibility='collapsed')
-    
 
-    # Neck — Bottom / Lower selector: edit via expander
     cols = st.columns([6, 1])
     cols[0].markdown(_render_color_badges(st.session_state.get('neck_south_colors', [])), unsafe_allow_html=True)
     cols[1].markdown('')
     with st.expander('Neck — Bottom wire colors', expanded=st.session_state.get('exp_neck_south', False)):
         st.multiselect('Neck bottom', [c for c in neck_colors if c not in st.session_state.get('neck_north_colors', [])], default=default_neck_bottom, key='neck_south_colors', label_visibility='collapsed')
 
-    # Bridge — Top / Upper selector: edit via expander
     cols = st.columns([6, 1])
     cols[0].markdown(_render_color_badges(st.session_state.get('bridge_north_colors', [])), unsafe_allow_html=True)
     cols[1].markdown('')
     with st.expander('Bridge — Top wire colors', expanded=st.session_state.get('exp_bridge_north', False)):
         st.multiselect('Bridge top', bridge_colors, default=default_bridge_top, key='bridge_north_colors', label_visibility='collapsed')
 
-    # Bridge — Bottom / Lower selector: edit via expander
     cols = st.columns([6, 1])
     cols[0].markdown(_render_color_badges(st.session_state.get('bridge_south_colors', [])), unsafe_allow_html=True)
     cols[1].markdown('')
     with st.expander('Bridge — Bottom wire colors', expanded=st.session_state.get('exp_bridge_south', False)):
         st.multiselect('Bridge bottom', [c for c in bridge_colors if c not in st.session_state.get('bridge_north_colors', [])], default=default_bridge_bottom, key='bridge_south_colors', label_visibility='collapsed')
+
     # validate mapping
     mapping_ok = True
     if len(st.session_state.get('neck_north_colors', [])) != 2 or len(st.session_state.get('neck_south_colors', [])) != 2:
@@ -1261,19 +1316,9 @@ with st.expander('Step 4 — Measurements', expanded=(step == 4)):
         st.warning('Please select exactly 2 colors for each bridge coil (top and bottom).')
         mapping_ok = False
     if mapping_ok:
-        st.info('Mapping looks good — use the top "Next" button to proceed to Phase checks.')
+        st.info('Mapping looks good — proceed with probe checks below.')
     else:
         st.info('Please fix the mapping warnings above. Select exactly 2 colors per coil before proceeding.')
-with st.expander('Step 5 — Phase checks', expanded=(step == 5)):
-    st.header('Step 5 — Phase checks (touch pole piece)')
-    st.caption('🔬 Time to channel your inner scientist! Touch pole pieces with a multimeter. If the needle goes up, congrats — you found "Normal" phase. If it goes down, you found "Reverse" (or as we call it, "the pickup is feeling rebellious today").')
-    st.info('💡 **Hint:** Set multimeter to DC resistance. Connect RED probe to one coil wire, BLACK probe to the other. While connected, touch a POLE PIECE with a screwdriver (or any metal object — yes, that counts as "proper lab technique"). If resistance RISES = Normal phase. If resistance LOWERS = Reverse phase. Test both wires to identify START and FINISH. (And no, the pole piece won\'t bite. Probably.)')
-    st.caption('🎸 *Psst... if you ask the AI assistant \"hello there\", it might respond in an *interesting* way. Pop culture references are fair game!* 😉')
-    # Probe→Wire mapping: let the user indicate which wire each probe contacted
-    st.subheader('Probe → Wire mapping')
-    st.write(f"Start from NECK-{n_pol['top']} and finish mapping to BRIDGE-{n_pol['bottom']}. Select which wire the RED probe touched and which wire the BLACK probe touched.")
-    st.write('For each coil, select which wire the RED probe touched and which wire the BLACK probe touched. Use these to verify phase mapping.')
-
 
     # Small helper: color name -> hex for badges
     PROBE_COLOR_HEX = {
@@ -1378,7 +1423,7 @@ with st.expander('Step 5 — Phase checks', expanded=(step == 5)):
         # best-effort preview; ignore errors
         pass
 
-with st.expander('Step 6 — Analyze Wiring', expanded=(step == 6)):
+if step == 6:
     st.header('Step 6 — Analyze Wiring & Generate Diagram')
     st.write('Review your phase testing results and generate the final wiring diagram.')
     st.caption('🎯 The moment of truth! Let\'s see if these pickups will hum-cancel or just... hum. (Spoiler: if they hum, blame the manufacturer, not the app. We\'re just the messenger.)')
